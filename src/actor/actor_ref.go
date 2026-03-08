@@ -1,0 +1,31 @@
+package actor
+
+import "context"
+
+type SubmitAck struct {
+	Result    SubmitResult
+	MessageID uint64
+}
+
+type ActorRef struct {
+	runtime *Runtime
+	actorID string
+}
+
+func (a *ActorRef) ID() string { return a.actorID }
+
+func (a *ActorRef) Send(ctx context.Context, payload any) SubmitAck {
+	return a.runtime.Send(ctx, a.actorID, payload)
+}
+
+func (a *ActorRef) Stop() StopResult {
+	return a.runtime.Stop(a.actorID)
+}
+
+func (a *ActorRef) Status() ActorStatus {
+	return a.runtime.Status(a.actorID)
+}
+
+func (a *ActorRef) SetState(any) error {
+	return ErrStateMutationForbidden
+}

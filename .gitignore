@@ -1,2 +1,16 @@
 .envrc
 .codex/
+
+# Go
+*.exe
+*.test
+*.out
+vendor/
+
+# Universal
+.DS_Store
+Thumbs.db
+*.tmp
+*.swp
+.vscode/
+.idea/

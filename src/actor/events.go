@@ -1,0 +1,56 @@
+package actor
+
+import (
+	"sync"
+	"time"
+)
+
+type EventType string
+
+const (
+	EventActorStarted     EventType = "actor_started"
+	EventActorStopped     EventType = "actor_stopped"
+	EventActorFailed      EventType = "actor_failed"
+	EventActorRestarted   EventType = "actor_restarted"
+	EventMessageProcessed EventType = "message_processed"
+	EventMessageRejected  EventType = "message_rejected"
+)
+
+type Event struct {
+	EventID   uint64
+	Type      EventType
+	ActorID   string
+	MessageID uint64
+	Timestamp time.Time
+	Result    string
+	ErrorCode string
+}
+
+type EventEmitter interface {
+	Emit(Event)
+}
+
+type NopEmitter struct{}
+
+func (NopEmitter) Emit(Event) {}
+
+type MemoryEmitter struct {
+	mu     sync.Mutex
+	events []Event
+}
+
+func NewMemoryEmitter() *MemoryEmitter { return &MemoryEmitter{} }
+
+func (m *MemoryEmitter) Emit(e Event) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.events = append(m.events, e)
+}
+
+func (m *MemoryEmitter) Events() []Event {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]Event, len(m.events))
+	copy(out, m.events)
+	return out
+}
