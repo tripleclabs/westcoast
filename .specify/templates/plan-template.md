@@ -17,21 +17,25 @@
   the iteration process.
 -->
 
-**Language/Version**: [e.g., Python 3.11, Swift 5.9, Rust 1.75 or NEEDS CLARIFICATION]  
-**Primary Dependencies**: [e.g., FastAPI, UIKit, LLVM or NEEDS CLARIFICATION]  
-**Storage**: [if applicable, e.g., PostgreSQL, CoreData, files or N/A]  
-**Testing**: [e.g., pytest, XCTest, cargo test or NEEDS CLARIFICATION]  
-**Target Platform**: [e.g., Linux server, iOS 15+, WASM or NEEDS CLARIFICATION]
-**Project Type**: [e.g., library/cli/web-service/mobile-app/compiler/desktop-app or NEEDS CLARIFICATION]  
-**Performance Goals**: [domain-specific, e.g., 1000 req/s, 10k lines/sec, 60 fps or NEEDS CLARIFICATION]  
-**Constraints**: [domain-specific, e.g., <200ms p95, <100MB memory, offline-capable or NEEDS CLARIFICATION]  
-**Scale/Scope**: [domain-specific, e.g., 10k users, 1M LOC, 50 screens or NEEDS CLARIFICATION]
+**Language/Version**: [e.g., Go 1.24+ or NEEDS CLARIFICATION]  
+**Primary Dependencies**: [e.g., Go standard library, minimal focused packages, or NEEDS CLARIFICATION]  
+**Storage**: [if applicable, e.g., memory only, files, PostgreSQL, or N/A]  
+**Testing**: [e.g., go test, table-driven tests, integration tests, or NEEDS CLARIFICATION]  
+**Target Platform**: [e.g., Linux/macOS single-node runtime or NEEDS CLARIFICATION]
+**Project Type**: [e.g., actor runtime library, CLI tooling, service, or NEEDS CLARIFICATION]  
+**Performance Goals**: [domain-specific, e.g., mailbox throughput, restart latency, p95 processing latency]  
+**Constraints**: [domain-specific, e.g., low-allocation hot paths, location-transparent APIs]  
+**Scale/Scope**: [domain-specific, e.g., actors/node, mailbox depth, feature boundary]
 
 ## Constitution Check
 
 *GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
 
-[Gates determined based on constitution file]
+- [ ] Go-native design: No mandatory external schema-first serialization in runtime hot path.
+- [ ] Let-it-crash semantics: Failure domains and supervision strategy are explicit.
+- [ ] Test-first proof: Planned failing tests exist for each behavior change.
+- [ ] Location transparency: Public contracts use logical actor identity/address abstractions.
+- [ ] Performance simplicity: Hot-path allocations/dependencies are justified with metrics plan.
 
 ## Project Structure
 

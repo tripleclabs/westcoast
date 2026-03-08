@@ -65,6 +65,18 @@
 
 [Add more user stories as needed, each with an assigned priority]
 
+### Failure & Recovery Scenarios *(mandatory)*
+
+- Define expected actor failures and supervisor response for each critical flow.
+- State restart behavior (restart/stop/escalate) and expected user-visible outcome.
+- Define what telemetry MUST be emitted for each failure class.
+
+### Location Transparency Impact *(mandatory)*
+
+- Describe actor identity/addressing model used by callers.
+- Confirm no user-facing contract depends on in-process pointer/reference identity.
+- Document seams required for future multi-node routing/transport.
+
 ### Edge Cases
 
 <!--
@@ -89,11 +101,13 @@
 - **FR-003**: Users MUST be able to [key interaction, e.g., "reset their password"]
 - **FR-004**: System MUST [data requirement, e.g., "persist user preferences"]
 - **FR-005**: System MUST [behavior, e.g., "log all security events"]
+- **FR-006**: System MUST define expected failure handling and supervision outcomes.
+- **FR-007**: System MUST keep public contracts location-transparent.
 
 *Example of marking unclear requirements:*
 
-- **FR-006**: System MUST authenticate users via [NEEDS CLARIFICATION: auth method not specified - email/password, SSO, OAuth?]
-- **FR-007**: System MUST retain user data for [NEEDS CLARIFICATION: retention period not specified]
+- **FR-008**: System MUST authenticate users via [NEEDS CLARIFICATION: auth method not specified - email/password, SSO, OAuth?]
+- **FR-009**: System MUST retain user data for [NEEDS CLARIFICATION: retention period not specified]
 
 ### Key Entities *(include if feature involves data)*
 
