@@ -29,3 +29,11 @@ func (a *ActorRef) Status() ActorStatus {
 func (a *ActorRef) SetState(any) error {
 	return ErrStateMutationForbidden
 }
+
+func (a *ActorRef) PID(namespace string) (PID, error) {
+	return a.runtime.IssuePID(namespace, a.actorID)
+}
+
+func (a *ActorRef) SendPID(ctx context.Context, pid PID, payload any) PIDSendAck {
+	return a.runtime.SendPID(ctx, pid, payload)
+}

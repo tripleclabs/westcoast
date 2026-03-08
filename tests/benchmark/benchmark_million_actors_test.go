@@ -61,9 +61,10 @@ func newLatencyRecorder(sampleEvery uint64, maxSamples int) *latencyRecorder {
 	}
 }
 
-func (r *latencyRecorder) ObserveMailboxDepth(string, int) {}
+func (r *latencyRecorder) ObserveMailboxDepth(string, int)                {}
 func (r *latencyRecorder) ObserveProcessingLatency(string, time.Duration) {}
-func (r *latencyRecorder) ObserveRestart(string) {}
+func (r *latencyRecorder) ObserveRestart(string)                          {}
+func (r *latencyRecorder) ObservePIDLookupLatency(string, time.Duration)  {}
 
 func (r *latencyRecorder) ObserveEnqueueLatency(_ string, d time.Duration) {
 	n := r.seen.Add(1)

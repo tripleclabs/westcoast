@@ -40,6 +40,8 @@ type Runtime struct {
 	msgSeq   atomic.Uint64
 	eventSeq atomic.Uint64
 	outcomes *outcomeStore
+	resolver PIDResolver
+	actorPID sync.Map // actorID -> PID
 }
 
 func WithEmitter(e EventEmitter) RuntimeOption {
@@ -62,6 +64,7 @@ func NewRuntime(opts ...RuntimeOption) *Runtime {
 		metrics:  metrics.NopHooks{},
 		now:      time.Now,
 		outcomes: newOutcomeStore(),
+		resolver: NewInMemoryPIDResolver(),
 	}
 	for _, opt := range opts {
 		opt(r)
@@ -125,6 +128,22 @@ func (r *Runtime) emit(eventType EventType, actorID string, messageID uint64, re
 	})
 }
 
+func (r *Runtime) emitPID(eventType EventType, pid PID, messageID uint64, outcome PIDDeliveryOutcome, code string) {
+	eid := r.eventSeq.Add(1)
+	r.emitter.Emit(Event{
+		EventID:       eid,
+		Type:          eventType,
+		ActorID:       pid.ActorID,
+		MessageID:     messageID,
+		PIDNamespace:  pid.Namespace,
+		PIDActorID:    pid.ActorID,
+		PIDGeneration: pid.Generation,
+		Timestamp:     r.now(),
+		Result:        string(outcome),
+		ErrorCode:     code,
+	})
+}
+
 func (r *Runtime) runActor(ctx context.Context, inst *actorInstance) {
 	inst.status.Store(int32(ActorRunningCode))
 	r.emit(EventActorStarted, inst.id, 0, string(ActorRunning), "")
@@ -179,6 +198,13 @@ func (r *Runtime) processMessage(inst *actorInstance, msg Message) {
 			inst.mu.Lock()
 			inst.state = newActorState(inst.initialState)
 			inst.mu.Unlock()
+			if v, ok := r.actorPID.Load(inst.id); ok {
+				oldPID := v.(PID)
+				r.resolver.SetState(oldPID, PIDRouteRestarting)
+				if newPID, bumped := r.resolver.BumpGeneration(oldPID); bumped {
+					r.actorPID.Store(inst.id, newPID)
+				}
+			}
 			inst.status.Store(int32(ActorRunningCode))
 			r.emit(EventActorRestarted, inst.id, msg.ID, string(ActorRunning), "")
 		default:
@@ -234,6 +260,9 @@ func (r *Runtime) Stop(actorID string) StopResult {
 		return StopAlready
 	}
 	inst.status.Store(int32(ActorStoppedCode))
+	if v, ok := r.actorPID.Load(actorID); ok {
+		r.resolver.SetState(v.(PID), PIDRouteStopped)
+	}
 	inst.cancel()
 	inst.mailbox.Close()
 	return StopStopped
@@ -266,4 +295,67 @@ func (r *Runtime) ActorRef(actorID string) (*ActorRef, error) {
 
 func (r *Runtime) Outcome(messageID uint64) (ProcessingOutcome, bool) {
 	return r.outcomes.get(messageID)
+}
+
+func (r *Runtime) IssuePID(namespace, actorID string) (PID, error) {
+	if _, ok := r.registry.get(actorID); !ok {
+		return PID{}, ErrActorNotFound
+	}
+	pid := PID{Namespace: namespace, ActorID: actorID, Generation: 1}
+	if err := pid.Validate(); err != nil {
+		return PID{}, err
+	}
+	r.resolver.Register(pid)
+	r.actorPID.Store(actorID, pid)
+	return pid, nil
+}
+
+func (r *Runtime) PIDForActor(actorID string) (PID, bool) {
+	v, ok := r.actorPID.Load(actorID)
+	if !ok {
+		return PID{}, false
+	}
+	return v.(PID), true
+}
+
+func (r *Runtime) ResolvePID(pid PID) (PIDResolverEntry, bool) {
+	start := r.now()
+	entry, ok := r.resolver.Resolve(pid)
+	r.metrics.ObservePIDLookupLatency(pid.Key(), r.now().Sub(start))
+	if !ok {
+		r.emitPID(EventPIDUnresolved, pid, 0, PIDUnresolved, string(PIDUnresolved))
+		return PIDResolverEntry{}, false
+	}
+	r.emitPID(EventPIDResolved, pid, 0, PIDDelivered, "")
+	return entry, true
+}
+
+func (r *Runtime) SendPID(ctx context.Context, pid PID, payload any) PIDSendAck {
+	start := r.now()
+	entry, ok := r.resolver.Resolve(pid)
+	r.metrics.ObservePIDLookupLatency(pid.Key(), r.now().Sub(start))
+	msgID := r.msgSeq.Add(1)
+	if !ok {
+		if _, exists := r.registry.get(pid.ActorID); !exists {
+			r.emitPID(EventPIDRejected, pid, msgID, PIDRejectedNotFound, string(PIDRejectedNotFound))
+			return PIDSendAck{Outcome: PIDRejectedNotFound, MessageID: msgID}
+		}
+		r.emitPID(EventPIDUnresolved, pid, msgID, PIDUnresolved, string(PIDUnresolved))
+		return PIDSendAck{Outcome: PIDUnresolved, MessageID: msgID}
+	}
+	if entry.RouteState == PIDRouteStopped {
+		r.emitPID(EventPIDRejected, pid, msgID, PIDRejectedStopped, string(PIDRejectedStopped))
+		return PIDSendAck{Outcome: PIDRejectedStopped, MessageID: msgID}
+	}
+	if pid.Generation != entry.CurrentGeneration {
+		r.emitPID(EventPIDRejected, pid, msgID, PIDRejectedStaleGeneration, string(PIDRejectedStaleGeneration))
+		return PIDSendAck{Outcome: PIDRejectedStaleGeneration, MessageID: msgID}
+	}
+	ack := r.Send(ctx, pid.ActorID, payload)
+	if ack.Result != SubmitAccepted {
+		r.emitPID(EventPIDRejected, pid, ack.MessageID, PIDRejectedStopped, string(PIDRejectedStopped))
+		return PIDSendAck{Outcome: PIDRejectedStopped, MessageID: ack.MessageID}
+	}
+	r.emitPID(EventPIDDelivered, pid, ack.MessageID, PIDDelivered, "")
+	return PIDSendAck{Outcome: PIDDelivered, MessageID: ack.MessageID}
 }
