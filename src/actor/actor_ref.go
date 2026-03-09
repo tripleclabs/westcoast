@@ -49,3 +49,7 @@ func (a *ActorRef) RegisterFallbackRoute(handlerKey string) error {
 func (a *ActorRef) RegisterName(name string) (RegistryRegisterAck, error) {
 	return a.runtime.RegisterName(a.actorID, name, "default")
 }
+
+func (a *ActorRef) LifecycleOutcomes() []LifecycleHookOutcome {
+	return a.runtime.LifecycleOutcomes(a.actorID)
+}

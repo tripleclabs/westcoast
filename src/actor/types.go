@@ -16,6 +16,8 @@ var (
 	ErrRegistryNameInvalid    = errors.New("registry_name_invalid")
 	ErrRegistryDuplicateName  = errors.New("registry_duplicate_name")
 	ErrRegistryNameNotFound   = errors.New("registry_name_not_found")
+	ErrLifecycleStartFailed   = errors.New("lifecycle_start_failed")
+	ErrLifecycleStopFailed    = errors.New("lifecycle_stop_failed")
 )
 
 type ActorStatus string
@@ -24,8 +26,35 @@ const (
 	ActorStarting   ActorStatus = "starting"
 	ActorRunning    ActorStatus = "running"
 	ActorRestarting ActorStatus = "restarting"
+	ActorStopping   ActorStatus = "stopping"
 	ActorStopped    ActorStatus = "stopped"
 )
+
+type LifecycleHookPhase string
+
+const (
+	LifecyclePhaseStart LifecycleHookPhase = "start"
+	LifecyclePhaseStop  LifecycleHookPhase = "stop"
+)
+
+type LifecycleHookResult string
+
+const (
+	LifecycleStartSuccess LifecycleHookResult = "start_success"
+	LifecycleStartFailed  LifecycleHookResult = "start_failed"
+	LifecycleStopSuccess  LifecycleHookResult = "stop_success"
+	LifecycleStopFailed   LifecycleHookResult = "stop_failed"
+)
+
+type LifecycleHook func(ctx context.Context, actorID string) error
+
+type LifecycleHookOutcome struct {
+	ActorID     string
+	Phase       LifecycleHookPhase
+	Result      LifecycleHookResult
+	CompletedAt time.Time
+	ErrorCode   string
+}
 
 type SubmitResult string
 

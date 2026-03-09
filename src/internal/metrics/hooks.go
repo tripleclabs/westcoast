@@ -15,6 +15,7 @@ type Hooks interface {
 	ObservePIDLookupLatency(pidKey string, d time.Duration)
 	ObserveRegistryLookupLatency(name string, d time.Duration)
 	ObserveRegistryOperation(result string)
+	ObserveLifecycleHook(phase string, result string)
 }
 
 type NopHooks struct{}
@@ -31,3 +32,4 @@ func (NopHooks) ObserveRestart(string)                              {}
 func (NopHooks) ObservePIDLookupLatency(string, time.Duration)      {}
 func (NopHooks) ObserveRegistryLookupLatency(string, time.Duration) {}
 func (NopHooks) ObserveRegistryOperation(string)                    {}
+func (NopHooks) ObserveLifecycleHook(string, string)                {}

@@ -16,6 +16,8 @@ type ActorOption func(*actorConfig)
 
 type actorConfig struct {
 	mailboxCapacity int
+	startHook       LifecycleHook
+	stopHook        LifecycleHook
 }
 
 type actorInstance struct {
@@ -29,6 +31,8 @@ type actorInstance struct {
 	lastDecision SupervisionDecision
 	cancel       context.CancelFunc
 	cfg          actorConfig
+	startHook    LifecycleHook
+	stopHook     LifecycleHook
 	mu           sync.RWMutex
 }
 
@@ -82,6 +86,14 @@ func WithMailboxCapacity(capacity int) ActorOption {
 	return func(c *actorConfig) { c.mailboxCapacity = capacity }
 }
 
+func WithStartHook(h LifecycleHook) ActorOption {
+	return func(c *actorConfig) { c.startHook = h }
+}
+
+func WithStopHook(h LifecycleHook) ActorOption {
+	return func(c *actorConfig) { c.stopHook = h }
+}
+
 func (r *Runtime) CreateActor(id string, initialState any, handler Handler, opts ...ActorOption) (*ActorRef, error) {
 	if id == "" {
 		return nil, fmt.Errorf("empty actor id")
@@ -102,6 +114,8 @@ func (r *Runtime) CreateActor(id string, initialState any, handler Handler, opts
 		initialState: initialState,
 		cancel:       cancel,
 		cfg:          cfg,
+		startHook:    cfg.startHook,
+		stopHook:     cfg.stopHook,
 	}
 	inst.status.Store(int32(ActorStartingCode))
 	if err := r.registry.put(id, inst); err != nil {
@@ -118,7 +132,8 @@ const (
 	ActorStartingCode actorStatusCode = 0
 	ActorRunningCode  actorStatusCode = 1
 	ActorRestartCode  actorStatusCode = 2
-	ActorStoppedCode  actorStatusCode = 3
+	ActorStoppingCode actorStatusCode = 3
+	ActorStoppedCode  actorStatusCode = 4
 )
 
 func (r *Runtime) emit(eventType EventType, actorID string, messageID uint64, result, code string) {
@@ -196,7 +211,75 @@ func (r *Runtime) emitRegistry(eventType EventType, name, actorID string, pid PI
 	})
 }
 
+func (r *Runtime) emitLifecycle(actorID string, phase LifecycleHookPhase, result LifecycleHookResult, code string) {
+	eid := r.eventSeq.Add(1)
+	r.emitter.Emit(Event{
+		EventID:        eid,
+		Type:           EventLifecycleHook,
+		ActorID:        actorID,
+		LifecyclePhase: string(phase),
+		Timestamp:      r.now(),
+		Result:         string(result),
+		ErrorCode:      code,
+	})
+	r.metrics.ObserveLifecycleHook(string(phase), string(result))
+}
+
+func (r *Runtime) runLifecycleHook(inst *actorInstance, phase LifecycleHookPhase, h LifecycleHook) error {
+	if h == nil {
+		return nil
+	}
+	code := ""
+	var err error
+	func() {
+		defer func() {
+			if rec := recover(); rec != nil {
+				err = fmt.Errorf("panic: %v", rec)
+				code = "panic"
+			}
+		}()
+		err = h(context.Background(), inst.id)
+		if err != nil {
+			code = "error"
+		}
+	}()
+	if err != nil {
+		out := LifecycleHookOutcome{
+			ActorID:     inst.id,
+			Phase:       phase,
+			Result:      LifecycleStartFailed,
+			CompletedAt: r.now(),
+			ErrorCode:   code,
+		}
+		if phase == LifecyclePhaseStop {
+			out.Result = LifecycleStopFailed
+		}
+		r.outcomes.putLifecycle(out)
+		r.emitLifecycle(inst.id, phase, out.Result, code)
+		return err
+	}
+	out := LifecycleHookOutcome{
+		ActorID:     inst.id,
+		Phase:       phase,
+		Result:      LifecycleStartSuccess,
+		CompletedAt: r.now(),
+	}
+	if phase == LifecyclePhaseStop {
+		out.Result = LifecycleStopSuccess
+	}
+	r.outcomes.putLifecycle(out)
+	r.emitLifecycle(inst.id, phase, out.Result, "")
+	return nil
+}
+
 func (r *Runtime) runActor(ctx context.Context, inst *actorInstance) {
+	if err := r.runLifecycleHook(inst, LifecyclePhaseStart, inst.startHook); err != nil {
+		inst.status.Store(int32(ActorStoppedCode))
+		inst.mailbox.Close()
+		inst.cancel()
+		r.emit(EventActorStopped, inst.id, 0, string(ActorStopped), ErrLifecycleStartFailed.Error())
+		return
+	}
 	inst.status.Store(int32(ActorRunningCode))
 	r.emit(EventActorStarted, inst.id, 0, string(ActorRunning), "")
 	for {
@@ -268,6 +351,14 @@ func (r *Runtime) processMessage(inst *actorInstance, msg Message) {
 				if newPID, bumped := r.resolver.BumpGeneration(oldPID); bumped {
 					r.actorPID.Store(inst.id, newPID)
 				}
+			}
+			if startErr := r.runLifecycleHook(inst, LifecyclePhaseStart, inst.startHook); startErr != nil {
+				inst.status.Store(int32(ActorStoppedCode))
+				inst.cancel()
+				inst.mailbox.Close()
+				r.cleanupRegistryForActor(inst.id, RegistryUnregisterLifecycleTerm)
+				r.emitDecision(EventActorStopped, inst.id, msg.ID, DecisionStop, inst.restarts, string(ActorStopped), ErrLifecycleStartFailed.Error())
+				return
 			}
 			inst.status.Store(int32(ActorRunningCode))
 			r.emitDecision(EventActorRestarted, inst.id, msg.ID, decision, inst.restarts, string(ActorRunning), "")
@@ -394,6 +485,8 @@ func (r *Runtime) Stop(actorID string) StopResult {
 	if r.Status(actorID) == ActorStopped {
 		return StopAlready
 	}
+	inst.status.Store(int32(ActorStoppingCode))
+	_ = r.runLifecycleHook(inst, LifecyclePhaseStop, inst.stopHook)
 	inst.status.Store(int32(ActorStoppedCode))
 	if v, ok := r.actorPID.Load(actorID); ok {
 		r.resolver.SetState(v.(PID), PIDRouteStopped)
@@ -425,6 +518,8 @@ func (r *Runtime) Status(actorID string) ActorStatus {
 		return ActorRunning
 	case ActorRestartCode:
 		return ActorRestarting
+	case ActorStoppingCode:
+		return ActorStopping
 	default:
 		return ActorStopped
 	}
@@ -439,6 +534,10 @@ func (r *Runtime) ActorRef(actorID string) (*ActorRef, error) {
 
 func (r *Runtime) Outcome(messageID uint64) (ProcessingOutcome, bool) {
 	return r.outcomes.get(messageID)
+}
+
+func (r *Runtime) LifecycleOutcomes(actorID string) []LifecycleHookOutcome {
+	return r.outcomes.lifecycleByActor(actorID)
 }
 
 func (r *Runtime) IssuePID(namespace, actorID string) (PID, error) {

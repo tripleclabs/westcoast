@@ -10,6 +10,7 @@ Auto-generated from all feature plans. Last updated: 2026-03-08
 - In-memory runtime state and mailbox queues only (no persistence in this feature) (004-supervisor-fault-tolerance)
 - Go 1.24+ + Go standard library (`sync`, `sync/atomic`, `time`, `context`) (005-actor-registry-discovery)
 - In-memory registry map structures in runtime scope only (005-actor-registry-discovery)
+- In-memory runtime lifecycle state and hook execution outcomes only (no persistence) (006-lifecycle-hooks)
 
 - Go 1.24+ + Go standard library (`context`, `sync`, `sync/atomic`, `runtime`, `time`) (001-actor-execution-engine)
 
@@ -29,9 +30,9 @@ tests/
 Go 1.24+: Follow standard conventions
 
 ## Recent Changes
+- 006-lifecycle-hooks: Added Go 1.24+ + Go standard library (`context`, `sync`, `sync/atomic`, `time`)
 - 005-actor-registry-discovery: Added Go 1.24+ + Go standard library (`sync`, `sync/atomic`, `time`, `context`)
 - 004-supervisor-fault-tolerance: Added Go 1.24+ + Go standard library (`context`, `sync`, `sync/atomic`, `time`)
-- 003-local-struct-messaging: Added Go 1.24+ + Go standard library (`context`, `sync`, `sync/atomic`, `reflect`, `time`)
 
 
 <!-- MANUAL ADDITIONS START -->

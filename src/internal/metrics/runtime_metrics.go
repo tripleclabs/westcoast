@@ -13,6 +13,7 @@ type RuntimeMetrics struct {
 	localSendNs   []int64
 	localSent     int64
 	localByResult map[string]int64
+	lifecycleBy   map[string]int64
 }
 
 func NewRuntimeMetrics() *RuntimeMetrics {
@@ -20,6 +21,7 @@ func NewRuntimeMetrics() *RuntimeMetrics {
 		pidLookup:     make([]int64, 0, 4096),
 		localSendNs:   make([]int64, 0, 4096),
 		localByResult: map[string]int64{},
+		lifecycleBy:   map[string]int64{},
 	}
 }
 
@@ -49,6 +51,11 @@ func (m *RuntimeMetrics) ObservePIDLookupLatency(_ string, d time.Duration) {
 
 func (m *RuntimeMetrics) ObserveRegistryLookupLatency(_ string, _ time.Duration) {}
 func (m *RuntimeMetrics) ObserveRegistryOperation(_ string)                      {}
+func (m *RuntimeMetrics) ObserveLifecycleHook(phase string, result string) {
+	m.mu.Lock()
+	m.lifecycleBy[phase+":"+result]++
+	m.mu.Unlock()
+}
 
 func (m *RuntimeMetrics) PIDLookupP95() time.Duration {
 	m.mu.Lock()

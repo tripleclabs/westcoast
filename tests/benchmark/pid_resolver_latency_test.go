@@ -39,6 +39,7 @@ func (m *pidLookupMetrics) ObserveMailboxPreservedDepth(string, int)           {
 func (m *pidLookupMetrics) ObserveRestart(string)                              {}
 func (m *pidLookupMetrics) ObserveRegistryLookupLatency(string, time.Duration) {}
 func (m *pidLookupMetrics) ObserveRegistryOperation(string)                    {}
+func (m *pidLookupMetrics) ObserveLifecycleHook(string, string)                {}
 func (m *pidLookupMetrics) ObservePIDLookupLatency(_ string, d time.Duration) {
 	n := m.seen.Add(1)
 	if n != 1 && n%64 != 0 {
