@@ -6,6 +6,8 @@ import (
 	"time"
 )
 
+const defaultBrokerMailboxCapacity = 65536
+
 func (r *Runtime) emitBroker(brokerID string, op BrokerOperation, topicPattern string, subscriber PID, matched int, result BrokerOutcomeType, reason string) {
 	eid := r.eventSeq.Add(1)
 	r.emitter.Emit(Event{
@@ -44,7 +46,7 @@ func (r *Runtime) EnsureBrokerActor(brokerID string) (*ActorRef, error) {
 	}
 
 	svc := newPubSubBrokerService(r, brokerID)
-	ref, err := r.CreateActor(brokerID, nil, svc.handler)
+	ref, err := r.CreateActor(brokerID, nil, svc.handler, WithMailboxCapacity(defaultBrokerMailboxCapacity))
 	if err != nil {
 		if err == ErrDuplicateActorID {
 			r.brokerMu.RLock()
@@ -64,6 +66,10 @@ func (r *Runtime) EnsureBrokerActor(brokerID string) (*ActorRef, error) {
 
 func (r *Runtime) BrokerOutcomes(brokerID string) []BrokerOutcome {
 	return r.outcomes.brokerByID(brokerID)
+}
+
+func (r *Runtime) BrokerPublishedCount(brokerID string) int {
+	return r.outcomes.brokerPublishedCount(brokerID)
 }
 
 func (r *Runtime) BrokerSubscribe(ctx context.Context, brokerID string, subscriber PID, pattern string, timeout time.Duration) (BrokerCommandAck, error) {

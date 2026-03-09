@@ -11,6 +11,7 @@ type outcomeStore struct {
 	routing         []RoutingOutcome
 	batch           []BatchOutcome
 	broker          []BrokerOutcome
+	brokerPublished map[string]int
 	readiness       []ReadinessValidationRecord
 	readinessCursor int
 }
@@ -19,14 +20,15 @@ const readinessHistoryLimit = 256
 
 func newOutcomeStore() *outcomeStore {
 	return &outcomeStore{
-		byID:      map[uint64]ProcessingOutcome{},
-		lifecycle: make([]LifecycleHookOutcome, 0, 32),
-		guardrail: make([]GuardrailOutcome, 0, 64),
-		ask:       make([]AskOutcome, 0, 128),
-		routing:   make([]RoutingOutcome, 0, 256),
-		batch:     make([]BatchOutcome, 0, 256),
-		broker:    make([]BrokerOutcome, 0, 256),
-		readiness: make([]ReadinessValidationRecord, 0, readinessHistoryLimit),
+		byID:            map[uint64]ProcessingOutcome{},
+		lifecycle:       make([]LifecycleHookOutcome, 0, 32),
+		guardrail:       make([]GuardrailOutcome, 0, 64),
+		ask:             make([]AskOutcome, 0, 128),
+		routing:         make([]RoutingOutcome, 0, 256),
+		batch:           make([]BatchOutcome, 0, 256),
+		broker:          make([]BrokerOutcome, 0, 256),
+		brokerPublished: map[string]int{},
+		readiness:       make([]ReadinessValidationRecord, 0, readinessHistoryLimit),
 	}
 }
 
@@ -148,6 +150,9 @@ func (o *outcomeStore) putBroker(out BrokerOutcome) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.broker = append(o.broker, out)
+	if out.Operation == BrokerOperationPublish {
+		o.brokerPublished[out.BrokerID]++
+	}
 }
 
 func (o *outcomeStore) brokerByID(brokerID string) []BrokerOutcome {
@@ -160,6 +165,12 @@ func (o *outcomeStore) brokerByID(brokerID string) []BrokerOutcome {
 		}
 	}
 	return out
+}
+
+func (o *outcomeStore) brokerPublishedCount(brokerID string) int {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.brokerPublished[brokerID]
 }
 
 func (o *outcomeStore) readinessAll() []ReadinessValidationRecord {

@@ -104,3 +104,7 @@ func (a *ActorRef) BatchOutcomes() []BatchOutcome {
 func (a *ActorRef) BrokerOutcomes() []BrokerOutcome {
 	return a.runtime.BrokerOutcomes(a.actorID)
 }
+
+func (a *ActorRef) BrokerPublishedCount() int {
+	return a.runtime.BrokerPublishedCount(a.actorID)
+}
