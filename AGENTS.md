@@ -5,6 +5,8 @@ Auto-generated from all feature plans. Last updated: 2026-03-08
 ## Active Technologies
 - Go 1.24+ + Go standard library (`context`, `sync`, `sync/atomic`, `time`) (002-location-transparent-pids)
 - In-memory resolver index and PID state only (no persistence in this feature) (002-location-transparent-pids)
+- Go 1.24+ + Go standard library (`context`, `sync`, `sync/atomic`, `reflect`, `time`) (003-local-struct-messaging)
+- In-memory mailbox/message structures only (no persistence in this feature) (003-local-struct-messaging)
 
 - Go 1.24+ + Go standard library (`context`, `sync`, `sync/atomic`, `runtime`, `time`) (001-actor-execution-engine)
 
@@ -24,6 +26,7 @@ tests/
 Go 1.24+: Follow standard conventions
 
 ## Recent Changes
+- 003-local-struct-messaging: Added Go 1.24+ + Go standard library (`context`, `sync`, `sync/atomic`, `reflect`, `time`)
 - 002-location-transparent-pids: Added Go 1.24+ + Go standard library (`context`, `sync`, `sync/atomic`, `time`)
 
 - 001-actor-execution-engine: Added Go 1.24+ + Go standard library (`context`, `sync`, `sync/atomic`, `runtime`, `time`)

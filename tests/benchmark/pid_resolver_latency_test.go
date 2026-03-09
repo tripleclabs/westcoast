@@ -31,7 +31,9 @@ type pidLookupMetrics struct {
 
 func (m *pidLookupMetrics) ObserveMailboxDepth(string, int)                {}
 func (m *pidLookupMetrics) ObserveEnqueueLatency(string, time.Duration)    {}
+func (m *pidLookupMetrics) ObserveLocalSendLatency(string, time.Duration)  {}
 func (m *pidLookupMetrics) ObserveProcessingLatency(string, time.Duration) {}
+func (m *pidLookupMetrics) ObserveLocalRouting(string, string)             {}
 func (m *pidLookupMetrics) ObserveRestart(string)                          {}
 func (m *pidLookupMetrics) ObservePIDLookupLatency(_ string, d time.Duration) {
 	n := m.seen.Add(1)

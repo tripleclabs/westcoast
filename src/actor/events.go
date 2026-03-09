@@ -12,6 +12,8 @@ const (
 	EventActorStopped     EventType = "actor_stopped"
 	EventActorFailed      EventType = "actor_failed"
 	EventActorRestarted   EventType = "actor_restarted"
+	EventMessageRoutedExact    EventType = "message_routed_exact"
+	EventMessageRoutedFallback EventType = "message_routed_fallback"
 	EventMessageProcessed EventType = "message_processed"
 	EventMessageRejected  EventType = "message_rejected"
 	EventPIDResolved      EventType = "pid_resolved"
@@ -28,6 +30,8 @@ type Event struct {
 	PIDNamespace  string
 	PIDActorID    string
 	PIDGeneration uint64
+	TypeName      string
+	SchemaVersion string
 	Timestamp     time.Time
 	Result        string
 	ErrorCode     string

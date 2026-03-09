@@ -63,6 +63,10 @@ func newLatencyRecorder(sampleEvery uint64, maxSamples int) *latencyRecorder {
 
 func (r *latencyRecorder) ObserveMailboxDepth(string, int)                {}
 func (r *latencyRecorder) ObserveProcessingLatency(string, time.Duration) {}
+func (r *latencyRecorder) ObserveLocalSendLatency(_ string, d time.Duration) {
+	r.ObserveEnqueueLatency("", d)
+}
+func (r *latencyRecorder) ObserveLocalRouting(string, string) {}
 func (r *latencyRecorder) ObserveRestart(string)                          {}
 func (r *latencyRecorder) ObservePIDLookupLatency(string, time.Duration)  {}
 

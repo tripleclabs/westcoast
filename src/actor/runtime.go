@@ -36,6 +36,7 @@ type Runtime struct {
 	emitter  EventEmitter
 	policy   SupervisorPolicy
 	metrics  metrics.Hooks
+	routing  *typeRoutingRegistry
 	now      func() time.Time
 	msgSeq   atomic.Uint64
 	eventSeq atomic.Uint64
@@ -62,6 +63,7 @@ func NewRuntime(opts ...RuntimeOption) *Runtime {
 		emitter:  NopEmitter{},
 		policy:   DefaultSupervisor{MaxRestarts: 1},
 		metrics:  metrics.NopHooks{},
+		routing:  newTypeRoutingRegistry(),
 		now:      time.Now,
 		outcomes: newOutcomeStore(),
 		resolver: NewInMemoryPIDResolver(),
@@ -83,7 +85,7 @@ func (r *Runtime) CreateActor(id string, initialState any, handler Handler, opts
 	if handler == nil {
 		return nil, fmt.Errorf("nil handler")
 	}
-	cfg := actorConfig{mailboxCapacity: 1024}
+		cfg := actorConfig{mailboxCapacity: 1024}
 	for _, opt := range opts {
 		opt(&cfg)
 	}
@@ -128,6 +130,21 @@ func (r *Runtime) emit(eventType EventType, actorID string, messageID uint64, re
 	})
 }
 
+func (r *Runtime) emitLocal(eventType EventType, actorID string, msg Message, result, code string) {
+	eid := r.eventSeq.Add(1)
+	r.emitter.Emit(Event{
+		EventID:       eid,
+		Type:          eventType,
+		ActorID:       actorID,
+		MessageID:     msg.ID,
+		TypeName:      msg.TypeName,
+		SchemaVersion: msg.SchemaVersion,
+		Timestamp:     r.now(),
+		Result:        result,
+		ErrorCode:     code,
+	})
+}
+
 func (r *Runtime) emitPID(eventType EventType, pid PID, messageID uint64, outcome PIDDeliveryOutcome, code string) {
 	eid := r.eventSeq.Add(1)
 	r.emitter.Emit(Event{
@@ -153,13 +170,14 @@ func (r *Runtime) runActor(ctx context.Context, inst *actorInstance) {
 			inst.status.Store(int32(ActorStoppedCode))
 			r.emit(EventActorStopped, inst.id, 0, string(ActorStopped), "")
 			return
-		case msg, ok := <-inst.mailbox.Channel():
-			if !ok {
-				inst.status.Store(int32(ActorStoppedCode))
-				r.emit(EventActorStopped, inst.id, 0, string(ActorStopped), "")
-				return
+		case <-inst.mailbox.Notify():
+			for {
+				msg, ok := inst.mailbox.Dequeue()
+				if !ok {
+					break
+				}
+				r.processMessage(inst, msg)
 			}
-			r.processMessage(inst, msg)
 		}
 	}
 }
@@ -217,10 +235,16 @@ func (r *Runtime) processMessage(inst *actorInstance, msg Message) {
 	inst.mu.Lock()
 	inst.state.apply(next)
 	inst.mu.Unlock()
-	r.emit(EventMessageProcessed, inst.id, msg.ID, string(ResultSuccess), "")
+	r.outcomes.put(ProcessingOutcome{MessageID: msg.ID, ActorID: inst.id, Result: ResultDelivered, CompletedAt: r.now()})
+	r.emitLocal(EventMessageProcessed, inst.id, msg, string(ResultDelivered), "")
 }
 
 func (r *Runtime) Send(_ context.Context, actorID string, payload any) SubmitAck {
+	sendStart := r.now()
+	defer func() {
+		r.metrics.ObserveLocalSendLatency(actorID, r.now().Sub(sendStart))
+	}()
+
 	inst, ok := r.registry.get(actorID)
 	msgID := r.msgSeq.Add(1)
 	if !ok {
@@ -235,8 +259,48 @@ func (r *Runtime) Send(_ context.Context, actorID string, payload any) SubmitAck
 		return SubmitAck{Result: SubmitRejectedStop, MessageID: msgID}
 	}
 
+	if payload == nil {
+		r.outcomes.put(ProcessingOutcome{MessageID: msgID, ActorID: actorID, Result: ResultRejectedNilPayload, CompletedAt: r.now(), ErrorCode: string(SubmitRejectedNilPayload)})
+		r.emit(EventMessageRejected, actorID, msgID, string(ResultRejectedNilPayload), string(SubmitRejectedNilPayload))
+		r.metrics.ObserveLocalRouting(actorID, string(SubmitRejectedNilPayload))
+		return SubmitAck{Result: SubmitRejectedNilPayload, MessageID: msgID}
+	}
+
+	typeName := messageTypeName(payload)
+	schemaVersion := messageSchemaVersion(payload)
+	msg := Message{
+		ID:            msgID,
+		ActorID:       actorID,
+		Payload:       payload,
+		TypeName:      typeName,
+		SchemaVersion: schemaVersion,
+		AcceptedAt:    r.now(),
+		Attempt:       1,
+	}
+
+	resolution := r.routing.resolve(actorID, typeName, schemaVersion)
+	switch resolution.match {
+	case routeExact:
+		r.metrics.ObserveLocalRouting(actorID, string(EventMessageRoutedExact))
+		r.emitLocal(EventMessageRoutedExact, actorID, msg, string(SubmitAccepted), "")
+	case routeFallback:
+		r.metrics.ObserveLocalRouting(actorID, string(EventMessageRoutedFallback))
+		r.emitLocal(EventMessageRoutedFallback, actorID, msg, string(SubmitAccepted), "")
+	case routeVersionMismatch:
+		r.outcomes.put(ProcessingOutcome{MessageID: msgID, ActorID: actorID, Result: ResultRejectedVersionMismatch, CompletedAt: r.now(), ErrorCode: string(SubmitRejectedVersionMismatch)})
+		r.emitLocal(EventMessageRejected, actorID, msg, string(ResultRejectedVersionMismatch), string(SubmitRejectedVersionMismatch))
+		r.metrics.ObserveLocalRouting(actorID, string(SubmitRejectedVersionMismatch))
+		return SubmitAck{Result: SubmitRejectedVersionMismatch, MessageID: msgID}
+	case routeUnsupportedType:
+		r.outcomes.put(ProcessingOutcome{MessageID: msgID, ActorID: actorID, Result: ResultRejectedUnsupportedType, CompletedAt: r.now(), ErrorCode: string(SubmitRejectedUnsupportedType)})
+		r.emitLocal(EventMessageRejected, actorID, msg, string(ResultRejectedUnsupportedType), string(SubmitRejectedUnsupportedType))
+		r.metrics.ObserveLocalRouting(actorID, string(SubmitRejectedUnsupportedType))
+		return SubmitAck{Result: SubmitRejectedUnsupportedType, MessageID: msgID}
+	case routeNoRules:
+		// Backward-compatible mode when no explicit route rules were registered.
+	}
+
 	start := r.now()
-	msg := Message{ID: msgID, ActorID: actorID, Payload: payload, AcceptedAt: r.now(), Attempt: 1}
 	res := inst.mailbox.Enqueue(msg)
 	r.metrics.ObserveEnqueueLatency(actorID, r.now().Sub(start))
 	r.metrics.ObserveMailboxDepth(actorID, inst.mailbox.Depth())
@@ -249,6 +313,22 @@ func (r *Runtime) Send(_ context.Context, actorID string, payload any) SubmitAck
 		r.emit(EventMessageRejected, actorID, msgID, string(ResultRejectedStop), string(SubmitRejectedStop))
 	}
 	return SubmitAck{Result: res, MessageID: msgID}
+}
+
+func (r *Runtime) RegisterTypeRoute(actorID, typeName, schemaVersion, handlerKey string) error {
+	if _, ok := r.registry.get(actorID); !ok {
+		return ErrActorNotFound
+	}
+	r.routing.registerExact(actorID, typeName, schemaVersion, handlerKey)
+	return nil
+}
+
+func (r *Runtime) RegisterFallbackRoute(actorID, handlerKey string) error {
+	if _, ok := r.registry.get(actorID); !ok {
+		return ErrActorNotFound
+	}
+	r.routing.registerFallback(actorID, handlerKey)
+	return nil
 }
 
 func (r *Runtime) Stop(actorID string) StopResult {

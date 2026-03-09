@@ -37,3 +37,11 @@ func (a *ActorRef) PID(namespace string) (PID, error) {
 func (a *ActorRef) SendPID(ctx context.Context, pid PID, payload any) PIDSendAck {
 	return a.runtime.SendPID(ctx, pid, payload)
 }
+
+func (a *ActorRef) RegisterTypeRoute(typeName, schemaVersion, handlerKey string) error {
+	return a.runtime.RegisterTypeRoute(a.actorID, typeName, schemaVersion, handlerKey)
+}
+
+func (a *ActorRef) RegisterFallbackRoute(handlerKey string) error {
+	return a.runtime.RegisterFallbackRoute(a.actorID, handlerKey)
+}
