@@ -25,6 +25,14 @@ Go-native actor runtime focused on deterministic single-node execution with expl
 - In-memory telemetry surfaces:
   - Event stream (`MemoryEmitter`).
   - Runtime metrics hooks (`internal/metrics`).
+- Native Pub/Sub broker (intra-node event bus):
+  - Built-in broker actor (`EnsureBrokerActor`) with no external MQ dependency.
+  - MQTT-style wildcard routing over segment topics:
+    - `+` single-segment wildcard (`user.+.updated`)
+    - `#` multi-segment tail wildcard (`audit.#`)
+  - Ask-based runtime subscription lifecycle (`subscribe`, `unsubscribe`).
+  - Asynchronous publish fan-out to all matching subscriber PIDs.
+  - Deterministic broker outcomes (`subscribe_success`, `publish_success`, `publish_partial_delivery`, etc.).
 
 ## Repository Layout
 
@@ -79,6 +87,9 @@ make bench-pid
 
 # local messaging throughput/latency
 make bench-local-messaging
+
+# pubsub broker fan-out benchmark
+GOCACHE=$(pwd)/.tmp/gocache go test ./tests/benchmark/... -run '^$' -bench BenchmarkPubSubBrokerFanout -benchmem -benchtime=100ms
 ```
 
 Optional environment variables used by benchmark suites:
@@ -88,6 +99,8 @@ Optional environment variables used by benchmark suites:
 - `WC_LAT_SAMPLE_EVERY`
 - `WC_LAT_MAX_SAMPLES`
 - `WC_ENFORCE_LOCAL_PERF_GATE`
+- `WC_PUBSUB_BENCH_FANOUT` (default `20`)
+- `WC_PUBSUB_BENCH_INFLIGHT` (default `256`)
 
 ## Quick Start
 
@@ -190,6 +203,46 @@ This enables asynchronous delegation:
 3. Delegate long work in a goroutine.
 4. Reply later via `SendPID(replyTo, ...)`.
 
+## Pub/Sub Event Bus (MQTT Semantics)
+
+Create or reuse the built-in broker actor:
+
+```go
+broker, err := rt.EnsureBrokerActor("broker")
+if err != nil {
+    panic(err)
+}
+```
+
+Subscribe/unsubscribe a PID at runtime via Ask-backed broker APIs:
+
+```go
+subscriberPID, _ := subscriber.PID("default")
+
+subAck, err := rt.BrokerSubscribe(context.Background(), broker.ID(), subscriberPID, "user.+.updated", time.Second)
+if err != nil {
+    panic(err)
+}
+_ = subAck
+
+unsubAck, err := rt.BrokerUnsubscribe(context.Background(), broker.ID(), subscriberPID, "user.+.updated", time.Second)
+if err != nil {
+    panic(err)
+}
+_ = unsubAck
+```
+
+Publish asynchronously to matching subscribers:
+
+```go
+ack := rt.BrokerPublish(context.Background(), broker.ID(), "user.profile.updated", payload, "publisher-actor")
+if ack.Result != actor.SubmitAccepted {
+    // handle rejection
+}
+```
+
+Subscriber handlers receive `actor.BrokerPublishedMessage` payloads.
+
 ## Feature Specs
 
 Current feature sets are documented under `specs/`:
@@ -204,6 +257,7 @@ Current feature sets are documented under `specs/`:
 - `008-ask-request-response`
 - `009-actor-router-pools`
 - `010-mailbox-batching`
+- `011-native-pubsub-broker`
 
 Each spec folder includes `spec.md`, `plan.md`, `tasks.md`, and supporting contract/data/research docs.
 
