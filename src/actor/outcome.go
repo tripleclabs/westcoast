@@ -9,6 +9,7 @@ type outcomeStore struct {
 	guardrail       []GuardrailOutcome
 	ask             []AskOutcome
 	routing         []RoutingOutcome
+	batch           []BatchOutcome
 	readiness       []ReadinessValidationRecord
 	readinessCursor int
 }
@@ -22,6 +23,7 @@ func newOutcomeStore() *outcomeStore {
 		guardrail: make([]GuardrailOutcome, 0, 64),
 		ask:       make([]AskOutcome, 0, 128),
 		routing:   make([]RoutingOutcome, 0, 256),
+		batch:     make([]BatchOutcome, 0, 256),
 		readiness: make([]ReadinessValidationRecord, 0, readinessHistoryLimit),
 	}
 }
@@ -116,6 +118,24 @@ func (o *outcomeStore) routingByRouter(routerID string) []RoutingOutcome {
 	out := make([]RoutingOutcome, 0, len(o.routing))
 	for _, v := range o.routing {
 		if v.RouterID == routerID {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+func (o *outcomeStore) putBatch(out BatchOutcome) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.batch = append(o.batch, out)
+}
+
+func (o *outcomeStore) batchByActor(actorID string) []BatchOutcome {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	out := make([]BatchOutcome, 0, len(o.batch))
+	for _, v := range o.batch {
+		if v.ActorID == actorID {
 			out = append(out, v)
 		}
 	}

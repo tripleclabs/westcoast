@@ -24,6 +24,7 @@ var (
 	ErrAskCanceled            = errors.New("ask_canceled")
 	ErrAskInvalidTimeout      = errors.New("ask_invalid_timeout")
 	ErrAskReplyTargetInvalid  = errors.New("ask_reply_target_invalid")
+	ErrBatchConfigInvalid     = errors.New("batch_config_invalid")
 )
 
 type ActorStatus string
@@ -260,6 +261,32 @@ type RoutingOutcome struct {
 	Outcome        RoutingOutcomeType
 	ReasonCode     string
 	At             time.Time
+}
+
+type BatchReceive interface {
+	BatchReceive(ctx context.Context, state any, payloads []any) (nextState any, err error)
+}
+
+type BatchConfig struct {
+	Enabled  bool
+	MaxSize  int
+	Receiver BatchReceive
+}
+
+type BatchResult string
+
+const (
+	BatchResultSuccess           BatchResult = "batch_success"
+	BatchResultFailedHandler     BatchResult = "batch_failed_handler"
+	BatchResultFailedSupervision BatchResult = "batch_failed_supervision"
+)
+
+type BatchOutcome struct {
+	ActorID     string
+	BatchSize   int
+	Result      BatchResult
+	ReasonCode  string
+	CompletedAt time.Time
 }
 
 type Handler func(ctx context.Context, state any, msg Message) (nextState any, err error)

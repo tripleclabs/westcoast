@@ -14,6 +14,10 @@ Go-native actor runtime focused on deterministic single-node execution with expl
   - Stateless strategies (`round_robin`, `random`).
   - Consistent-hash sharding for `HashKey()` messages.
   - Deterministic routing outcomes (`route_success`, `route_failed_*`).
+- Smart mailbox batching:
+  - Opt-in bounded batch retrieval per actor cycle.
+  - `BatchReceive([]any)`-style handling for grouped payload processing.
+  - Batch lifecycle outcomes (`batch_success`, `batch_failed_*`).
 - Distributed-readiness guardrails:
   - PID-only cross-actor policy mode.
   - Pluggable gateway route modes (`local_direct`, `gateway_mediated`).
@@ -134,6 +138,7 @@ From [`src/actor/runtime.go`](/Volumes/Store1/src/3clabs/westcoast/src/actor/run
   - `WithMailboxCapacity(n)`
   - `WithStartHook(h)`, `WithStopHook(h)`
   - `WithStopHookTimeout(d)`
+  - `WithBatching(maxBatchSize, receiver)`
 - Messaging:
   - `ActorRef.Send(ctx, payload)`
   - `ActorRef.Ask(ctx, payload, timeout)`
@@ -154,9 +159,13 @@ From [`src/actor/runtime.go`](/Volumes/Store1/src/3clabs/westcoast/src/actor/run
   - `GuardrailOutcomes(actorID)`
   - `AskOutcomes(actorID)`
   - `RoutingOutcomes(routerID)`
+  - `BatchOutcomes(actorID)`
 - Router surfaces:
   - `ActorRef.ConfigureRouter(strategy, workers)`
   - `ActorRef.Route(ctx, payload)`
+- Batching surfaces:
+  - `ActorRef.ConfigureBatching(maxBatchSize, receiver)`
+  - `ActorRef.DisableBatching()`
 
 ## Ask Request-Response Pattern
 
@@ -194,6 +203,7 @@ Current feature sets are documented under `specs/`:
 - `007-pid-gateway-guardrails`
 - `008-ask-request-response`
 - `009-actor-router-pools`
+- `010-mailbox-batching`
 
 Each spec folder includes `spec.md`, `plan.md`, `tasks.md`, and supporting contract/data/research docs.
 

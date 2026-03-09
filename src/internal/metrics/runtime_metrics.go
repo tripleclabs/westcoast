@@ -17,6 +17,7 @@ type RuntimeMetrics struct {
 	guardrailBy   map[string]int64
 	askBy         map[string]int64
 	routerBy      map[string]int64
+	batchBy       map[string]int64
 }
 
 func NewRuntimeMetrics() *RuntimeMetrics {
@@ -28,6 +29,7 @@ func NewRuntimeMetrics() *RuntimeMetrics {
 		guardrailBy:   map[string]int64{},
 		askBy:         map[string]int64{},
 		routerBy:      map[string]int64{},
+		batchBy:       map[string]int64{},
 	}
 }
 
@@ -75,6 +77,11 @@ func (m *RuntimeMetrics) ObserveAskOutcome(outcome string) {
 func (m *RuntimeMetrics) ObserveRouterOutcome(strategy string, outcome string) {
 	m.mu.Lock()
 	m.routerBy[strategy+":"+outcome]++
+	m.mu.Unlock()
+}
+func (m *RuntimeMetrics) ObserveBatchOutcome(result string) {
+	m.mu.Lock()
+	m.batchBy[result]++
 	m.mu.Unlock()
 }
 

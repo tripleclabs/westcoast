@@ -29,6 +29,7 @@ const (
 	EventReadinessValidation   EventType = "readiness_validation"
 	EventAskLifecycle          EventType = "ask_lifecycle"
 	EventRouterLifecycle       EventType = "router_lifecycle"
+	EventBatchLifecycle        EventType = "batch_lifecycle"
 )
 
 type Event struct {
@@ -53,6 +54,7 @@ type Event struct {
 	ReplyToGeneration   uint64
 	RouterStrategy      string
 	SelectedWorker      string
+	BatchSize           int
 	Timestamp           time.Time
 	Result              string
 	ErrorCode           string

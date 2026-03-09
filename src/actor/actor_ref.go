@@ -88,3 +88,15 @@ func (a *ActorRef) Route(ctx context.Context, payload any) SubmitAck {
 func (a *ActorRef) RoutingOutcomes() []RoutingOutcome {
 	return a.runtime.RoutingOutcomes(a.actorID)
 }
+
+func (a *ActorRef) ConfigureBatching(maxBatchSize int, receiver BatchReceive) error {
+	return a.runtime.ConfigureBatching(a.actorID, maxBatchSize, receiver)
+}
+
+func (a *ActorRef) DisableBatching() error {
+	return a.runtime.DisableBatching(a.actorID)
+}
+
+func (a *ActorRef) BatchOutcomes() []BatchOutcome {
+	return a.runtime.BatchOutcomes(a.actorID)
+}

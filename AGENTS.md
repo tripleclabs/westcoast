@@ -15,6 +15,7 @@ Auto-generated from all feature plans. Last updated: 2026-03-08
 - In-memory Ask wait tracking and response-correlation state only (no persistence) (008-ask-reply-semantics)
 - Go 1.24+ + Go standard library (`context`, `sync`, `sync/atomic`, `time`, `hash/fnv`) (009-actor-router-pools)
 - In-memory router configuration, pool membership, routing counters, and routing outcomes only (no persistence) (009-actor-router-pools)
+- In-memory mailbox queues, actor runtime state, and batching outcomes only (no persistence) (010-mailbox-batching)
 
 - Go 1.24+ + Go standard library (`context`, `sync`, `sync/atomic`, `runtime`, `time`) (001-actor-execution-engine)
 
@@ -34,9 +35,9 @@ tests/
 Go 1.24+: Follow standard conventions
 
 ## Recent Changes
+- 010-mailbox-batching: Added Go 1.24+ + Go standard library (`context`, `sync`, `sync/atomic`, `time`)
 - 009-actor-router-pools: Added Go 1.24+ + Go standard library (`context`, `sync`, `sync/atomic`, `time`, `hash/fnv`)
 - 008-ask-reply-semantics: Added Go 1.24+ + Go standard library (`context`, `sync`, `sync/atomic`, `time`)
-- 007-pid-gateway-guardrails: Added Go 1.24+ + Go standard library (`context`, `sync`, `sync/atomic`, `time`)
 
 
 <!-- MANUAL ADDITIONS START -->

@@ -21,6 +21,7 @@ type actorConfig struct {
 	startHook       LifecycleHook
 	stopHook        LifecycleHook
 	stopHookTimeout time.Duration
+	batch           BatchConfig
 }
 
 type actorInstance struct {
@@ -37,6 +38,7 @@ type actorInstance struct {
 	cfg          actorConfig
 	startHook    LifecycleHook
 	stopHook     LifecycleHook
+	batch        BatchConfig
 	mu           sync.RWMutex
 }
 
@@ -134,6 +136,14 @@ func WithStopHookTimeout(d time.Duration) ActorOption {
 	return func(c *actorConfig) { c.stopHookTimeout = d }
 }
 
+func WithBatching(maxBatchSize int, receiver BatchReceive) ActorOption {
+	return func(c *actorConfig) {
+		c.batch.Enabled = true
+		c.batch.MaxSize = maxBatchSize
+		c.batch.Receiver = receiver
+	}
+}
+
 func (r *Runtime) CreateActor(id string, initialState any, handler Handler, opts ...ActorOption) (*ActorRef, error) {
 	if id == "" {
 		return nil, fmt.Errorf("empty actor id")
@@ -157,6 +167,7 @@ func (r *Runtime) CreateActor(id string, initialState any, handler Handler, opts
 		cfg:          cfg,
 		startHook:    cfg.startHook,
 		stopHook:     cfg.stopHook,
+		batch:        cfg.batch,
 	}
 	inst.status.Store(int32(ActorStartingCode))
 	if err := r.registry.put(id, inst); err != nil {
@@ -358,6 +369,27 @@ func (r *Runtime) emitRouter(routerID string, messageID uint64, strategy RouterS
 	})
 }
 
+func (r *Runtime) emitBatch(actorID string, batchSize int, result BatchResult, code string) {
+	eid := r.eventSeq.Add(1)
+	r.emitter.Emit(Event{
+		EventID:   eid,
+		Type:      EventBatchLifecycle,
+		ActorID:   actorID,
+		BatchSize: batchSize,
+		Timestamp: r.now(),
+		Result:    string(result),
+		ErrorCode: code,
+	})
+	r.metrics.ObserveBatchOutcome(string(result))
+	r.outcomes.putBatch(BatchOutcome{
+		ActorID:     actorID,
+		BatchSize:   batchSize,
+		Result:      result,
+		ReasonCode:  code,
+		CompletedAt: r.now(),
+	})
+}
+
 func (r *Runtime) runLifecycleHook(ctx context.Context, inst *actorInstance, phase LifecycleHookPhase, h LifecycleHook) error {
 	if h == nil {
 		return nil
@@ -492,6 +524,17 @@ func (r *Runtime) runActor(ctx context.Context, inst *actorInstance) {
 			return
 		case <-inst.mailbox.Notify():
 			for {
+				inst.mu.RLock()
+				batchCfg := inst.batch
+				inst.mu.RUnlock()
+				if batchCfg.Enabled && batchCfg.MaxSize > 1 {
+					msgs := inst.mailbox.DequeueBatch(batchCfg.MaxSize)
+					if len(msgs) == 0 {
+						break
+					}
+					r.processBatch(inst, msgs)
+					continue
+				}
 				msg, ok := inst.mailbox.Dequeue()
 				if !ok {
 					break
@@ -500,6 +543,115 @@ func (r *Runtime) runActor(ctx context.Context, inst *actorInstance) {
 			}
 		}
 	}
+}
+
+func (r *Runtime) processBatch(inst *actorInstance, msgs []Message) {
+	if len(msgs) == 0 {
+		return
+	}
+	started := r.now()
+	defer func() {
+		r.metrics.ObserveProcessingLatency(inst.id, r.now().Sub(started))
+	}()
+
+	inst.mu.RLock()
+	cfg := inst.batch
+	cur := inst.state.value()
+	inst.mu.RUnlock()
+	if !cfg.Enabled || cfg.Receiver == nil {
+		for _, msg := range msgs {
+			r.processMessage(inst, msg)
+		}
+		return
+	}
+
+	payloads := make([]any, len(msgs))
+	for i, msg := range msgs {
+		payloads[i] = msg.Payload
+	}
+
+	var (
+		next any
+		err  error
+	)
+	func() {
+		defer func() {
+			if rec := recover(); rec != nil {
+				err = fmt.Errorf("panic: %v", rec)
+			}
+		}()
+		next, err = cfg.Receiver.BatchReceive(inst.ctx, cur, payloads)
+	}()
+	if err != nil {
+		r.metrics.ObservePanicIntercept(inst.id)
+		r.emitBatch(inst.id, len(msgs), BatchResultFailedHandler, "batch_handler_error")
+		decision := r.policy.Decide(inst.id, err, inst.restarts)
+		for _, msg := range msgs {
+			r.outcomes.put(ProcessingOutcome{
+				MessageID:            msg.ID,
+				ActorID:              inst.id,
+				Result:               ResultFailed,
+				SupervisionDecision:  decision,
+				SupervisionIteration: inst.restarts,
+				CompletedAt:          r.now(),
+				ErrorCode:            "batch_handler_error",
+			})
+		}
+		r.emitDecision(EventActorFailed, inst.id, msgs[0].ID, decision, inst.restarts, string(ResultFailed), "batch_handler_error")
+		inst.lastDecision = decision
+		switch decision {
+		case DecisionRestart:
+			inst.status.Store(int32(ActorRestartCode))
+			inst.restarts++
+			r.metrics.ObserveMailboxPreservedDepth(inst.id, inst.mailbox.Depth())
+			r.metrics.ObserveRestart(inst.id)
+			inst.mu.Lock()
+			inst.state = newActorState(inst.initialState)
+			inst.mu.Unlock()
+			if v, ok := r.actorPID.Load(inst.id); ok {
+				oldPID := v.(PID)
+				r.resolver.SetState(oldPID, PIDRouteRestarting)
+				if newPID, bumped := r.resolver.BumpGeneration(oldPID); bumped {
+					r.actorPID.Store(inst.id, newPID)
+				}
+			}
+			if startErr := r.runLifecycleHook(inst.ctx, inst, LifecyclePhaseStart, inst.startHook); startErr != nil {
+				inst.status.Store(int32(ActorStoppedCode))
+				inst.cancel()
+				inst.mailbox.Close()
+				r.cleanupRegistryForActor(inst.id, RegistryUnregisterLifecycleTerm)
+				r.emitBatch(inst.id, len(msgs), BatchResultFailedSupervision, ErrLifecycleStartFailed.Error())
+				r.emitDecision(EventActorStopped, inst.id, msgs[0].ID, DecisionStop, inst.restarts, string(ActorStopped), ErrLifecycleStartFailed.Error())
+				return
+			}
+			inst.status.Store(int32(ActorRunningCode))
+			r.emitDecision(EventActorRestarted, inst.id, msgs[0].ID, decision, inst.restarts, string(ActorRunning), "")
+		case DecisionEscalate:
+			inst.status.Store(int32(ActorStoppedCode))
+			inst.cancel()
+			inst.mailbox.Close()
+			r.cleanupRegistryForActor(inst.id, RegistryUnregisterLifecycleTerm)
+			r.emitBatch(inst.id, len(msgs), BatchResultFailedSupervision, "escalated")
+			r.emitDecision(EventActorEscalated, inst.id, msgs[0].ID, decision, inst.restarts, string(ActorStopped), "escalated")
+		default:
+			inst.status.Store(int32(ActorStoppedCode))
+			inst.cancel()
+			inst.mailbox.Close()
+			r.cleanupRegistryForActor(inst.id, RegistryUnregisterLifecycleTerm)
+			r.emitBatch(inst.id, len(msgs), BatchResultFailedSupervision, "supervisor_stop")
+			r.emitDecision(EventActorStopped, inst.id, msgs[0].ID, decision, inst.restarts, string(ActorStopped), "supervisor_stop")
+		}
+		return
+	}
+
+	inst.mu.Lock()
+	inst.state.apply(next)
+	inst.mu.Unlock()
+	for _, msg := range msgs {
+		r.outcomes.put(ProcessingOutcome{MessageID: msg.ID, ActorID: inst.id, Result: ResultDelivered, CompletedAt: r.now()})
+		r.emitLocal(EventMessageProcessed, inst.id, msg, string(ResultDelivered), "")
+	}
+	r.emitBatch(inst.id, len(msgs), BatchResultSuccess, "")
 }
 
 func (r *Runtime) processMessage(inst *actorInstance, msg Message) {
@@ -585,6 +737,39 @@ func (r *Runtime) processMessage(inst *actorInstance, msg Message) {
 	inst.mu.Unlock()
 	r.outcomes.put(ProcessingOutcome{MessageID: msg.ID, ActorID: inst.id, Result: ResultDelivered, CompletedAt: r.now()})
 	r.emitLocal(EventMessageProcessed, inst.id, msg, string(ResultDelivered), "")
+}
+
+func (r *Runtime) ConfigureBatching(actorID string, maxBatchSize int, receiver BatchReceive) error {
+	inst, ok := r.registry.get(actorID)
+	if !ok {
+		return ErrActorNotFound
+	}
+	if maxBatchSize <= 0 {
+		return ErrBatchConfigInvalid
+	}
+	inst.mu.Lock()
+	inst.batch.Enabled = true
+	inst.batch.MaxSize = maxBatchSize
+	inst.batch.Receiver = receiver
+	inst.cfg.batch = inst.batch
+	inst.mu.Unlock()
+	return nil
+}
+
+func (r *Runtime) DisableBatching(actorID string) error {
+	inst, ok := r.registry.get(actorID)
+	if !ok {
+		return ErrActorNotFound
+	}
+	inst.mu.Lock()
+	inst.batch = BatchConfig{}
+	inst.cfg.batch = inst.batch
+	inst.mu.Unlock()
+	return nil
+}
+
+func (r *Runtime) BatchOutcomes(actorID string) []BatchOutcome {
+	return r.outcomes.batchByActor(actorID)
 }
 
 func (r *Runtime) ConfigureRouter(routerID string, strategy RouterStrategy, workers []string) error {

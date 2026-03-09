@@ -77,6 +77,7 @@ func (r *latencyRecorder) ObserveLifecycleHook(string, string)                {}
 func (r *latencyRecorder) ObserveGuardrailDecision(string, string)            {}
 func (r *latencyRecorder) ObserveAskOutcome(string)                           {}
 func (r *latencyRecorder) ObserveRouterOutcome(string, string)                {}
+func (r *latencyRecorder) ObserveBatchOutcome(string)                         {}
 
 func (r *latencyRecorder) ObserveEnqueueLatency(_ string, d time.Duration) {
 	n := r.seen.Add(1)
