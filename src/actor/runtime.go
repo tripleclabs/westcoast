@@ -34,6 +34,7 @@ type actorInstance struct {
 
 type Runtime struct {
 	registry *actorRegistry
+	names    *namedRegistry
 	emitter  EventEmitter
 	policy   SupervisorPolicy
 	metrics  metrics.Hooks
@@ -61,6 +62,7 @@ func WithMetrics(h metrics.Hooks) RuntimeOption {
 func NewRuntime(opts ...RuntimeOption) *Runtime {
 	r := &Runtime{
 		registry: newRegistry(),
+		names:    newNamedRegistry(time.Now),
 		emitter:  NopEmitter{},
 		policy:   DefaultSupervisor{MaxRestarts: 1},
 		metrics:  metrics.NopHooks{},
@@ -72,6 +74,7 @@ func NewRuntime(opts ...RuntimeOption) *Runtime {
 	for _, opt := range opts {
 		opt(r)
 	}
+	r.names.now = r.now
 	return r
 }
 
@@ -177,6 +180,22 @@ func (r *Runtime) emitPID(eventType EventType, pid PID, messageID uint64, outcom
 	})
 }
 
+func (r *Runtime) emitRegistry(eventType EventType, name, actorID string, pid PID, result RegistryOperationResult, code string) {
+	eid := r.eventSeq.Add(1)
+	r.emitter.Emit(Event{
+		EventID:       eid,
+		Type:          eventType,
+		ActorID:       actorID,
+		PIDNamespace:  pid.Namespace,
+		PIDActorID:    pid.ActorID,
+		PIDGeneration: pid.Generation,
+		RegistryName:  name,
+		Timestamp:     r.now(),
+		Result:        string(result),
+		ErrorCode:     code,
+	})
+}
+
 func (r *Runtime) runActor(ctx context.Context, inst *actorInstance) {
 	inst.status.Store(int32(ActorRunningCode))
 	r.emit(EventActorStarted, inst.id, 0, string(ActorRunning), "")
@@ -256,11 +275,13 @@ func (r *Runtime) processMessage(inst *actorInstance, msg Message) {
 			inst.status.Store(int32(ActorStoppedCode))
 			inst.cancel()
 			inst.mailbox.Close()
+			r.cleanupRegistryForActor(inst.id, RegistryUnregisterLifecycleTerm)
 			r.emitDecision(EventActorEscalated, inst.id, msg.ID, decision, inst.restarts, string(ActorStopped), "escalated")
 		default:
 			inst.status.Store(int32(ActorStoppedCode))
 			inst.cancel()
 			inst.mailbox.Close()
+			r.cleanupRegistryForActor(inst.id, RegistryUnregisterLifecycleTerm)
 			r.emitDecision(EventActorStopped, inst.id, msg.ID, decision, inst.restarts, string(ActorStopped), "supervisor_stop")
 		}
 		return
@@ -379,7 +400,16 @@ func (r *Runtime) Stop(actorID string) StopResult {
 	}
 	inst.cancel()
 	inst.mailbox.Close()
+	r.cleanupRegistryForActor(actorID, RegistryUnregisterLifecycleTerm)
 	return StopStopped
+}
+
+func (r *Runtime) cleanupRegistryForActor(actorID string, result RegistryOperationResult) {
+	entries := r.names.unregisterByActor(actorID)
+	for _, e := range entries {
+		r.metrics.ObserveRegistryOperation(string(result))
+		r.emitRegistry(EventRegistryUnregister, e.name, e.actorID, e.pid, result, "")
+	}
 }
 
 func (r *Runtime) Status(actorID string) ActorStatus {
@@ -472,4 +502,60 @@ func (r *Runtime) SendPID(ctx context.Context, pid PID, payload any) PIDSendAck 
 	}
 	r.emitPID(EventPIDDelivered, pid, ack.MessageID, PIDDelivered, "")
 	return PIDSendAck{Outcome: PIDDelivered, MessageID: ack.MessageID}
+}
+
+func (r *Runtime) RegisterName(actorID, name, namespace string) (RegistryRegisterAck, error) {
+	if _, ok := r.registry.get(actorID); !ok {
+		return RegistryRegisterAck{Result: RegistryRegisterRejectedDup, Name: name}, ErrActorNotFound
+	}
+	if namespace == "" {
+		namespace = "default"
+	}
+	pid, ok := r.PIDForActor(actorID)
+	if !ok || pid.Namespace != namespace {
+		var err error
+		pid, err = r.IssuePID(namespace, actorID)
+		if err != nil {
+			return RegistryRegisterAck{Result: RegistryRegisterRejectedDup, Name: name}, err
+		}
+	}
+	entry, err := r.names.register(name, actorID, pid)
+	if err != nil {
+		r.metrics.ObserveRegistryOperation(string(RegistryRegisterRejectedDup))
+		if err == ErrRegistryDuplicateName {
+			r.emitRegistry(EventRegistryRegister, name, actorID, pid, RegistryRegisterRejectedDup, ErrRegistryDuplicateName.Error())
+			return RegistryRegisterAck{Result: RegistryRegisterRejectedDup, Name: name}, err
+		}
+		r.emitRegistry(EventRegistryRegister, name, actorID, pid, RegistryRegisterRejectedDup, err.Error())
+		return RegistryRegisterAck{Result: RegistryRegisterRejectedDup, Name: name}, err
+	}
+	r.metrics.ObserveRegistryOperation(string(RegistryRegisterSuccess))
+	r.emitRegistry(EventRegistryRegister, entry.name, entry.actorID, entry.pid, RegistryRegisterSuccess, "")
+	return RegistryRegisterAck{Result: RegistryRegisterSuccess, Name: entry.name, PID: entry.pid}, nil
+}
+
+func (r *Runtime) LookupName(name string) RegistryLookupAck {
+	start := r.now()
+	entry, ok := r.names.lookup(name)
+	r.metrics.ObserveRegistryLookupLatency(name, r.now().Sub(start))
+	if !ok {
+		r.metrics.ObserveRegistryOperation(string(RegistryLookupNotFound))
+		r.emitRegistry(EventRegistryLookup, name, "", PID{}, RegistryLookupNotFound, ErrRegistryNameNotFound.Error())
+		return RegistryLookupAck{Result: RegistryLookupNotFound, Name: name}
+	}
+	r.metrics.ObserveRegistryOperation(string(RegistryLookupHit))
+	r.emitRegistry(EventRegistryLookup, entry.name, entry.actorID, entry.pid, RegistryLookupHit, "")
+	return RegistryLookupAck{Result: RegistryLookupHit, Name: entry.name, PID: entry.pid}
+}
+
+func (r *Runtime) UnregisterName(name string) RegistryLookupAck {
+	entry, ok := r.names.unregister(name)
+	if !ok {
+		r.metrics.ObserveRegistryOperation(string(RegistryLookupNotFound))
+		r.emitRegistry(EventRegistryUnregister, name, "", PID{}, RegistryLookupNotFound, ErrRegistryNameNotFound.Error())
+		return RegistryLookupAck{Result: RegistryLookupNotFound, Name: name}
+	}
+	r.metrics.ObserveRegistryOperation(string(RegistryUnregisterSuccess))
+	r.emitRegistry(EventRegistryUnregister, entry.name, entry.actorID, entry.pid, RegistryUnregisterSuccess, "")
+	return RegistryLookupAck{Result: RegistryUnregisterSuccess, Name: entry.name, PID: entry.pid}
 }

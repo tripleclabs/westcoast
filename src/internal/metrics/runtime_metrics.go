@@ -47,6 +47,9 @@ func (m *RuntimeMetrics) ObservePIDLookupLatency(_ string, d time.Duration) {
 	m.mu.Unlock()
 }
 
+func (m *RuntimeMetrics) ObserveRegistryLookupLatency(_ string, _ time.Duration) {}
+func (m *RuntimeMetrics) ObserveRegistryOperation(_ string)                      {}
+
 func (m *RuntimeMetrics) PIDLookupP95() time.Duration {
 	m.mu.Lock()
 	defer m.mu.Unlock()

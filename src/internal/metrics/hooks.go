@@ -13,6 +13,8 @@ type Hooks interface {
 	ObserveMailboxPreservedDepth(actorID string, depth int)
 	ObserveRestart(actorID string)
 	ObservePIDLookupLatency(pidKey string, d time.Duration)
+	ObserveRegistryLookupLatency(name string, d time.Duration)
+	ObserveRegistryOperation(result string)
 }
 
 type NopHooks struct{}
@@ -22,8 +24,10 @@ func (NopHooks) ObserveEnqueueLatency(string, time.Duration)   {}
 func (NopHooks) ObserveLocalSendLatency(string, time.Duration) {}
 func (NopHooks) ObserveProcessingLatency(string, time.Duration) {
 }
-func (NopHooks) ObserveLocalRouting(string, string)            {}
-func (NopHooks) ObservePanicIntercept(string)                  {}
-func (NopHooks) ObserveMailboxPreservedDepth(string, int)      {}
-func (NopHooks) ObserveRestart(string)                         {}
-func (NopHooks) ObservePIDLookupLatency(string, time.Duration) {}
+func (NopHooks) ObserveLocalRouting(string, string)                 {}
+func (NopHooks) ObservePanicIntercept(string)                       {}
+func (NopHooks) ObserveMailboxPreservedDepth(string, int)           {}
+func (NopHooks) ObserveRestart(string)                              {}
+func (NopHooks) ObservePIDLookupLatency(string, time.Duration)      {}
+func (NopHooks) ObserveRegistryLookupLatency(string, time.Duration) {}
+func (NopHooks) ObserveRegistryOperation(string)                    {}

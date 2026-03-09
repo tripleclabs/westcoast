@@ -11,7 +11,7 @@ type DefaultSupervisor struct {
 
 func (d DefaultSupervisor) Decide(_ string, _ error, restartCount int) SupervisionDecision {
 	max := d.MaxRestarts
-	if max <= 0 {
+	if max < 0 {
 		max = 1
 	}
 	if restartCount < max {

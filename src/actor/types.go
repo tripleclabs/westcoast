@@ -3,6 +3,8 @@ package actor
 import (
 	"context"
 	"errors"
+	"fmt"
+	"regexp"
 	"time"
 )
 
@@ -11,6 +13,9 @@ var (
 	ErrActorNotFound          = errors.New("actor_not_found")
 	ErrActorStopped           = errors.New("actor_stopped")
 	ErrStateMutationForbidden = errors.New("state_mutation_forbidden")
+	ErrRegistryNameInvalid    = errors.New("registry_name_invalid")
+	ErrRegistryDuplicateName  = errors.New("registry_duplicate_name")
+	ErrRegistryNameNotFound   = errors.New("registry_name_not_found")
 )
 
 type ActorStatus string
@@ -86,3 +91,35 @@ const (
 	DecisionStop     SupervisionDecision = "stop"
 	DecisionEscalate SupervisionDecision = "escalate"
 )
+
+type RegistryOperationResult string
+
+const (
+	RegistryRegisterSuccess         RegistryOperationResult = "register_success"
+	RegistryRegisterRejectedDup     RegistryOperationResult = "register_rejected_duplicate"
+	RegistryLookupHit               RegistryOperationResult = "lookup_hit"
+	RegistryLookupNotFound          RegistryOperationResult = "lookup_not_found"
+	RegistryUnregisterSuccess       RegistryOperationResult = "unregister_success"
+	RegistryUnregisterLifecycleTerm RegistryOperationResult = "unregister_lifecycle_terminal"
+)
+
+type RegistryRegisterAck struct {
+	Result RegistryOperationResult
+	Name   string
+	PID    PID
+}
+
+type RegistryLookupAck struct {
+	Result RegistryOperationResult
+	Name   string
+	PID    PID
+}
+
+var registryNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
+
+func validateRegistryName(name string) error {
+	if !registryNamePattern.MatchString(name) {
+		return fmt.Errorf("%w: %q", ErrRegistryNameInvalid, name)
+	}
+	return nil
+}

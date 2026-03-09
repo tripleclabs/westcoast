@@ -22,14 +22,16 @@ type localPerfMetrics struct {
 	samples []int64
 }
 
-func (m *localPerfMetrics) ObserveMailboxDepth(string, int)                {}
-func (m *localPerfMetrics) ObserveEnqueueLatency(string, time.Duration)    {}
-func (m *localPerfMetrics) ObserveProcessingLatency(string, time.Duration) {}
-func (m *localPerfMetrics) ObserveLocalRouting(string, string)             {}
-func (m *localPerfMetrics) ObservePanicIntercept(string)                   {}
-func (m *localPerfMetrics) ObserveMailboxPreservedDepth(string, int)       {}
-func (m *localPerfMetrics) ObserveRestart(string)                          {}
-func (m *localPerfMetrics) ObservePIDLookupLatency(string, time.Duration)  {}
+func (m *localPerfMetrics) ObserveMailboxDepth(string, int)                    {}
+func (m *localPerfMetrics) ObserveEnqueueLatency(string, time.Duration)        {}
+func (m *localPerfMetrics) ObserveProcessingLatency(string, time.Duration)     {}
+func (m *localPerfMetrics) ObserveLocalRouting(string, string)                 {}
+func (m *localPerfMetrics) ObservePanicIntercept(string)                       {}
+func (m *localPerfMetrics) ObserveMailboxPreservedDepth(string, int)           {}
+func (m *localPerfMetrics) ObserveRestart(string)                              {}
+func (m *localPerfMetrics) ObservePIDLookupLatency(string, time.Duration)      {}
+func (m *localPerfMetrics) ObserveRegistryLookupLatency(string, time.Duration) {}
+func (m *localPerfMetrics) ObserveRegistryOperation(string)                    {}
 func (m *localPerfMetrics) ObserveLocalSendLatency(_ string, d time.Duration) {
 	n := m.seen.Add(1)
 	if n != 1 && n%64 != 0 {

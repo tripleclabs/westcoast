@@ -21,6 +21,9 @@ const (
 	EventPIDUnresolved         EventType = "pid_unresolved"
 	EventPIDRejected           EventType = "pid_rejected"
 	EventPIDDelivered          EventType = "pid_delivered"
+	EventRegistryRegister      EventType = "registry_register"
+	EventRegistryLookup        EventType = "registry_lookup"
+	EventRegistryUnregister    EventType = "registry_unregister"
 )
 
 type Event struct {
@@ -35,6 +38,7 @@ type Event struct {
 	SchemaVersion       string
 	SupervisionDecision string
 	RestartCount        int
+	RegistryName        string
 	Timestamp           time.Time
 	Result              string
 	ErrorCode           string

@@ -8,6 +8,8 @@ Auto-generated from all feature plans. Last updated: 2026-03-08
 - Go 1.24+ + Go standard library (`context`, `sync`, `sync/atomic`, `reflect`, `time`) (003-local-struct-messaging)
 - In-memory mailbox/message structures only (no persistence in this feature) (003-local-struct-messaging)
 - In-memory runtime state and mailbox queues only (no persistence in this feature) (004-supervisor-fault-tolerance)
+- Go 1.24+ + Go standard library (`sync`, `sync/atomic`, `time`, `context`) (005-actor-registry-discovery)
+- In-memory registry map structures in runtime scope only (005-actor-registry-discovery)
 
 - Go 1.24+ + Go standard library (`context`, `sync`, `sync/atomic`, `runtime`, `time`) (001-actor-execution-engine)
 
@@ -27,9 +29,9 @@ tests/
 Go 1.24+: Follow standard conventions
 
 ## Recent Changes
+- 005-actor-registry-discovery: Added Go 1.24+ + Go standard library (`sync`, `sync/atomic`, `time`, `context`)
 - 004-supervisor-fault-tolerance: Added Go 1.24+ + Go standard library (`context`, `sync`, `sync/atomic`, `time`)
 - 003-local-struct-messaging: Added Go 1.24+ + Go standard library (`context`, `sync`, `sync/atomic`, `reflect`, `time`)
-- 002-location-transparent-pids: Added Go 1.24+ + Go standard library (`context`, `sync`, `sync/atomic`, `time`)
 
 
 <!-- MANUAL ADDITIONS START -->

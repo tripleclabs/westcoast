@@ -45,3 +45,7 @@ func (a *ActorRef) RegisterTypeRoute(typeName, schemaVersion, handlerKey string)
 func (a *ActorRef) RegisterFallbackRoute(handlerKey string) error {
 	return a.runtime.RegisterFallbackRoute(a.actorID, handlerKey)
 }
+
+func (a *ActorRef) RegisterName(name string) (RegistryRegisterAck, error) {
+	return a.runtime.RegisterName(a.actorID, name, "default")
+}
