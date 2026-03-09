@@ -18,6 +18,7 @@ type actorConfig struct {
 	mailboxCapacity int
 	startHook       LifecycleHook
 	stopHook        LifecycleHook
+	stopHookTimeout time.Duration
 }
 
 type actorInstance struct {
@@ -29,6 +30,7 @@ type actorInstance struct {
 	initialState any
 	restarts     int
 	lastDecision SupervisionDecision
+	ctx          context.Context
 	cancel       context.CancelFunc
 	cfg          actorConfig
 	startHook    LifecycleHook
@@ -49,6 +51,7 @@ type Runtime struct {
 	outcomes  *outcomeStore
 	resolver  PIDResolver
 	actorPID  sync.Map // actorID -> PID
+	policyMu  sync.RWMutex
 	pidPolicy PIDInteractionPolicyMode
 }
 
@@ -96,6 +99,10 @@ func WithStopHook(h LifecycleHook) ActorOption {
 	return func(c *actorConfig) { c.stopHook = h }
 }
 
+func WithStopHookTimeout(d time.Duration) ActorOption {
+	return func(c *actorConfig) { c.stopHookTimeout = d }
+}
+
 func (r *Runtime) CreateActor(id string, initialState any, handler Handler, opts ...ActorOption) (*ActorRef, error) {
 	if id == "" {
 		return nil, fmt.Errorf("empty actor id")
@@ -103,7 +110,7 @@ func (r *Runtime) CreateActor(id string, initialState any, handler Handler, opts
 	if handler == nil {
 		return nil, fmt.Errorf("nil handler")
 	}
-	cfg := actorConfig{mailboxCapacity: 1024}
+	cfg := actorConfig{mailboxCapacity: 1024, stopHookTimeout: 5 * time.Second}
 	for _, opt := range opts {
 		opt(&cfg)
 	}
@@ -114,6 +121,7 @@ func (r *Runtime) CreateActor(id string, initialState any, handler Handler, opts
 		handler:      handler,
 		state:        newActorState(initialState),
 		initialState: initialState,
+		ctx:          ctx,
 		cancel:       cancel,
 		cfg:          cfg,
 		startHook:    cfg.startHook,
@@ -229,6 +237,7 @@ func (r *Runtime) emitLifecycle(actorID string, phase LifecycleHookPhase, result
 
 func (r *Runtime) emitGuardrail(actorID string, mode GatewayRouteMode, outcome GuardrailOutcomeType, code string) {
 	eid := r.eventSeq.Add(1)
+	policyMode := r.PIDInteractionPolicy()
 	r.emitter.Emit(Event{
 		EventID:     eid,
 		Type:        EventGuardrailDecision,
@@ -241,7 +250,7 @@ func (r *Runtime) emitGuardrail(actorID string, mode GatewayRouteMode, outcome G
 	r.metrics.ObserveGuardrailDecision("guardrail", string(outcome))
 	r.outcomes.putGuardrail(GuardrailOutcome{
 		ActorID:     actorID,
-		PolicyMode:  r.pidPolicy,
+		PolicyMode:  policyMode,
 		GatewayMode: mode,
 		Outcome:     outcome,
 		ReasonCode:  code,
@@ -268,7 +277,7 @@ func (r *Runtime) emitReadiness(scope ReadinessScope, result ReadinessResult, ev
 	})
 }
 
-func (r *Runtime) runLifecycleHook(inst *actorInstance, phase LifecycleHookPhase, h LifecycleHook) error {
+func (r *Runtime) runLifecycleHook(ctx context.Context, inst *actorInstance, phase LifecycleHookPhase, h LifecycleHook) error {
 	if h == nil {
 		return nil
 	}
@@ -281,7 +290,7 @@ func (r *Runtime) runLifecycleHook(inst *actorInstance, phase LifecycleHookPhase
 				code = "panic"
 			}
 		}()
-		err = h(context.Background(), inst.id)
+		err = h(ctx, inst.id)
 		if err != nil {
 			code = "error"
 		}
@@ -315,8 +324,77 @@ func (r *Runtime) runLifecycleHook(inst *actorInstance, phase LifecycleHookPhase
 	return nil
 }
 
+func (r *Runtime) runLifecycleStopHookWithTimeout(inst *actorInstance, timeout time.Duration) {
+	if inst.stopHook == nil {
+		return
+	}
+	if timeout <= 0 {
+		timeout = 5 * time.Second
+	}
+	hookCtx, cancel := context.WithTimeout(inst.ctx, timeout)
+	defer cancel()
+
+	type hookResult struct {
+		code string
+		err  error
+	}
+	done := make(chan hookResult, 1)
+	go func() {
+		code := ""
+		var err error
+		func() {
+			defer func() {
+				if rec := recover(); rec != nil {
+					err = fmt.Errorf("panic: %v", rec)
+					code = "panic"
+				}
+			}()
+			err = inst.stopHook(hookCtx, inst.id)
+			if err != nil {
+				code = "error"
+			}
+		}()
+		done <- hookResult{code: code, err: err}
+	}()
+
+	select {
+	case res := <-done:
+		if res.err != nil {
+			r.outcomes.putLifecycle(LifecycleHookOutcome{
+				ActorID:     inst.id,
+				Phase:       LifecyclePhaseStop,
+				Result:      LifecycleStopFailed,
+				CompletedAt: r.now(),
+				ErrorCode:   res.code,
+			})
+			r.emitLifecycle(inst.id, LifecyclePhaseStop, LifecycleStopFailed, res.code)
+			return
+		}
+		r.outcomes.putLifecycle(LifecycleHookOutcome{
+			ActorID:     inst.id,
+			Phase:       LifecyclePhaseStop,
+			Result:      LifecycleStopSuccess,
+			CompletedAt: r.now(),
+		})
+		r.emitLifecycle(inst.id, LifecyclePhaseStop, LifecycleStopSuccess, "")
+	case <-hookCtx.Done():
+		r.outcomes.putLifecycle(LifecycleHookOutcome{
+			ActorID:     inst.id,
+			Phase:       LifecyclePhaseStop,
+			Result:      LifecycleStopFailed,
+			CompletedAt: r.now(),
+			ErrorCode:   "timeout",
+		})
+		r.emitLifecycle(inst.id, LifecyclePhaseStop, LifecycleStopFailed, "timeout")
+	}
+}
+
+func (r *Runtime) runStopHookWithTimeout(inst *actorInstance, timeout time.Duration) {
+	r.runLifecycleStopHookWithTimeout(inst, timeout)
+}
+
 func (r *Runtime) runActor(ctx context.Context, inst *actorInstance) {
-	if err := r.runLifecycleHook(inst, LifecyclePhaseStart, inst.startHook); err != nil {
+	if err := r.runLifecycleHook(ctx, inst, LifecyclePhaseStart, inst.startHook); err != nil {
 		inst.status.Store(int32(ActorStoppedCode))
 		inst.mailbox.Close()
 		inst.cancel()
@@ -362,7 +440,7 @@ func (r *Runtime) processMessage(inst *actorInstance, msg Message) {
 		inst.mu.RLock()
 		cur := inst.state.value()
 		inst.mu.RUnlock()
-		next, err = inst.handler(context.Background(), cur, msg)
+		next, err = inst.handler(inst.ctx, cur, msg)
 	}()
 
 	if err != nil {
@@ -395,7 +473,7 @@ func (r *Runtime) processMessage(inst *actorInstance, msg Message) {
 					r.actorPID.Store(inst.id, newPID)
 				}
 			}
-			if startErr := r.runLifecycleHook(inst, LifecyclePhaseStart, inst.startHook); startErr != nil {
+			if startErr := r.runLifecycleHook(inst.ctx, inst, LifecyclePhaseStart, inst.startHook); startErr != nil {
 				inst.status.Store(int32(ActorStoppedCode))
 				inst.cancel()
 				inst.mailbox.Close()
@@ -529,7 +607,7 @@ func (r *Runtime) Stop(actorID string) StopResult {
 		return StopAlready
 	}
 	inst.status.Store(int32(ActorStoppingCode))
-	_ = r.runLifecycleHook(inst, LifecyclePhaseStop, inst.stopHook)
+	r.runStopHookWithTimeout(inst, inst.cfg.stopHookTimeout)
 	inst.status.Store(int32(ActorStoppedCode))
 	if v, ok := r.actorPID.Load(actorID); ok {
 		r.resolver.SetState(v.(PID), PIDRouteStopped)
@@ -666,9 +744,9 @@ func (r *Runtime) sendPIDWithSender(ctx context.Context, senderActorID string, p
 	return PIDSendAck{Outcome: PIDDelivered, MessageID: ack.MessageID}
 }
 
-func (r *Runtime) CrossActorSendByActorID(_ context.Context, senderActorID, targetActorID string, payload any) SubmitAck {
-	msgID := r.msgSeq.Add(1)
-	if r.pidPolicy == PIDInteractionPolicyPIDOnly && senderActorID != "" && senderActorID != targetActorID {
+func (r *Runtime) CrossActorSendByActorID(ctx context.Context, senderActorID, targetActorID string, payload any) SubmitAck {
+	if r.PIDInteractionPolicy() == PIDInteractionPolicyPIDOnly && senderActorID != "" && senderActorID != targetActorID {
+		msgID := r.msgSeq.Add(1)
 		r.outcomes.put(ProcessingOutcome{
 			MessageID:   msgID,
 			ActorID:     targetActorID,
@@ -680,21 +758,25 @@ func (r *Runtime) CrossActorSendByActorID(_ context.Context, senderActorID, targ
 		return SubmitAck{Result: SubmitRejectedFound, MessageID: msgID}
 	}
 	r.emitGuardrail(senderActorID, r.resolver.GatewayMode(), GuardrailPolicyAccept, "")
-	return r.Send(context.Background(), targetActorID, payload)
+	return r.Send(ctx, targetActorID, payload)
 }
 
 func (r *Runtime) CrossActorSendPID(ctx context.Context, senderActorID string, target PID, payload any) PIDSendAck {
-	if r.pidPolicy == PIDInteractionPolicyPIDOnly {
+	if r.PIDInteractionPolicy() == PIDInteractionPolicyPIDOnly {
 		r.emitGuardrail(senderActorID, r.resolver.GatewayMode(), GuardrailPolicyAccept, "")
 	}
 	return r.sendPIDWithSender(ctx, senderActorID, target, payload)
 }
 
 func (r *Runtime) SetPIDInteractionPolicy(mode PIDInteractionPolicyMode) {
+	r.policyMu.Lock()
+	defer r.policyMu.Unlock()
 	r.pidPolicy = mode
 }
 
 func (r *Runtime) PIDInteractionPolicy() PIDInteractionPolicyMode {
+	r.policyMu.RLock()
+	defer r.policyMu.RUnlock()
 	return r.pidPolicy
 }
 
@@ -711,7 +793,7 @@ func (r *Runtime) GuardrailOutcomes(actorID string) []GuardrailOutcome {
 }
 
 func (r *Runtime) ValidateDistributedReadiness() []ReadinessValidationRecord {
-	mode := r.pidPolicy
+	mode := r.PIDInteractionPolicy()
 	if mode == PIDInteractionPolicyPIDOnly {
 		r.emitReadiness(ReadinessScopePIDPolicy, ReadinessPass, "")
 	} else {

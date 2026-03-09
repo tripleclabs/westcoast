@@ -3,19 +3,22 @@ package actor
 import "sync"
 
 type outcomeStore struct {
-	mu        sync.Mutex
-	byID      map[uint64]ProcessingOutcome
-	lifecycle []LifecycleHookOutcome
-	guardrail []GuardrailOutcome
-	readiness []ReadinessValidationRecord
+	mu              sync.Mutex
+	byID            map[uint64]ProcessingOutcome
+	lifecycle       []LifecycleHookOutcome
+	guardrail       []GuardrailOutcome
+	readiness       []ReadinessValidationRecord
+	readinessCursor int
 }
+
+const readinessHistoryLimit = 256
 
 func newOutcomeStore() *outcomeStore {
 	return &outcomeStore{
 		byID:      map[uint64]ProcessingOutcome{},
 		lifecycle: make([]LifecycleHookOutcome, 0, 32),
 		guardrail: make([]GuardrailOutcome, 0, 64),
-		readiness: make([]ReadinessValidationRecord, 0, 16),
+		readiness: make([]ReadinessValidationRecord, 0, readinessHistoryLimit),
 	}
 }
 
@@ -71,13 +74,23 @@ func (o *outcomeStore) guardrailByActor(actorID string) []GuardrailOutcome {
 func (o *outcomeStore) putReadiness(out ReadinessValidationRecord) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	o.readiness = append(o.readiness, out)
+	if len(o.readiness) < readinessHistoryLimit {
+		o.readiness = append(o.readiness, out)
+		return
+	}
+	o.readiness[o.readinessCursor] = out
+	o.readinessCursor = (o.readinessCursor + 1) % readinessHistoryLimit
 }
 
 func (o *outcomeStore) readinessAll() []ReadinessValidationRecord {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	out := make([]ReadinessValidationRecord, len(o.readiness))
-	copy(out, o.readiness)
+	if len(o.readiness) < readinessHistoryLimit {
+		copy(out, o.readiness)
+		return out
+	}
+	n := copy(out, o.readiness[o.readinessCursor:])
+	copy(out[n:], o.readiness[:o.readinessCursor])
 	return out
 }
