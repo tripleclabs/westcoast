@@ -17,6 +17,7 @@ type Hooks interface {
 	ObserveRegistryOperation(result string)
 	ObserveLifecycleHook(phase string, result string)
 	ObserveGuardrailDecision(scope string, result string)
+	ObserveAskOutcome(outcome string)
 }
 
 type NopHooks struct{}
@@ -35,3 +36,4 @@ func (NopHooks) ObserveRegistryLookupLatency(string, time.Duration) {}
 func (NopHooks) ObserveRegistryOperation(string)                    {}
 func (NopHooks) ObserveLifecycleHook(string, string)                {}
 func (NopHooks) ObserveGuardrailDecision(string, string)            {}
+func (NopHooks) ObserveAskOutcome(string)                           {}

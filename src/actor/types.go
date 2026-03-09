@@ -20,6 +20,10 @@ var (
 	ErrLifecycleStopFailed    = errors.New("lifecycle_stop_failed")
 	ErrNonPIDCrossActor       = errors.New("non_pid_cross_actor_rejected")
 	ErrGatewayRouteFailed     = errors.New("gateway_route_failed")
+	ErrAskTimeout             = errors.New("ask_timeout")
+	ErrAskCanceled            = errors.New("ask_canceled")
+	ErrAskInvalidTimeout      = errors.New("ask_invalid_timeout")
+	ErrAskReplyTargetInvalid  = errors.New("ask_reply_target_invalid")
 )
 
 type ActorStatus string
@@ -137,10 +141,29 @@ type Message struct {
 	ActorID       string
 	SenderActorID string
 	Payload       any
+	Ask           *AskRequestContext
 	TypeName      string
 	SchemaVersion string
 	AcceptedAt    time.Time
 	Attempt       int
+}
+
+func (m Message) IsAsk() bool {
+	return m.Ask != nil
+}
+
+func (m Message) AskRequestID() string {
+	if m.Ask == nil {
+		return ""
+	}
+	return m.Ask.RequestID
+}
+
+func (m Message) AskReplyTo() (PID, bool) {
+	if m.Ask == nil {
+		return PID{}, false
+	}
+	return m.Ask.ReplyTo, true
 }
 
 type ProcessingResult string
@@ -165,6 +188,41 @@ type ProcessingOutcome struct {
 	SupervisionIteration int
 	CompletedAt          time.Time
 	ErrorCode            string
+}
+
+type AskOutcomeType string
+
+const (
+	AskOutcomeSuccess            AskOutcomeType = "ask_success"
+	AskOutcomeTimeout            AskOutcomeType = "ask_timeout"
+	AskOutcomeCanceled           AskOutcomeType = "ask_canceled"
+	AskOutcomeReplyTargetInvalid AskOutcomeType = "ask_reply_target_invalid"
+	AskOutcomeLateReplyDropped   AskOutcomeType = "ask_late_reply_dropped"
+)
+
+type AskRequestContext struct {
+	RequestID string
+	ReplyTo   PID
+}
+
+type AskReplyEnvelope struct {
+	RequestID string
+	Payload   any
+	RepliedAt time.Time
+}
+
+type AskResult struct {
+	RequestID string
+	Payload   any
+}
+
+type AskOutcome struct {
+	RequestID   string
+	ActorID     string
+	ReplyTo     PID
+	Outcome     AskOutcomeType
+	ReasonCode  string
+	CompletedAt time.Time
 }
 
 type Handler func(ctx context.Context, state any, msg Message) (nextState any, err error)

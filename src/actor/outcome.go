@@ -7,6 +7,7 @@ type outcomeStore struct {
 	byID            map[uint64]ProcessingOutcome
 	lifecycle       []LifecycleHookOutcome
 	guardrail       []GuardrailOutcome
+	ask             []AskOutcome
 	readiness       []ReadinessValidationRecord
 	readinessCursor int
 }
@@ -18,6 +19,7 @@ func newOutcomeStore() *outcomeStore {
 		byID:      map[uint64]ProcessingOutcome{},
 		lifecycle: make([]LifecycleHookOutcome, 0, 32),
 		guardrail: make([]GuardrailOutcome, 0, 64),
+		ask:       make([]AskOutcome, 0, 128),
 		readiness: make([]ReadinessValidationRecord, 0, readinessHistoryLimit),
 	}
 }
@@ -80,6 +82,24 @@ func (o *outcomeStore) putReadiness(out ReadinessValidationRecord) {
 	}
 	o.readiness[o.readinessCursor] = out
 	o.readinessCursor = (o.readinessCursor + 1) % readinessHistoryLimit
+}
+
+func (o *outcomeStore) putAsk(out AskOutcome) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.ask = append(o.ask, out)
+}
+
+func (o *outcomeStore) askByActor(actorID string) []AskOutcome {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	out := make([]AskOutcome, 0, len(o.ask))
+	for _, v := range o.ask {
+		if v.ActorID == actorID {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 func (o *outcomeStore) readinessAll() []ReadinessValidationRecord {

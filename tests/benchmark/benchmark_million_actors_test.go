@@ -75,6 +75,7 @@ func (r *latencyRecorder) ObserveRegistryLookupLatency(string, time.Duration) {}
 func (r *latencyRecorder) ObserveRegistryOperation(string)                    {}
 func (r *latencyRecorder) ObserveLifecycleHook(string, string)                {}
 func (r *latencyRecorder) ObserveGuardrailDecision(string, string)            {}
+func (r *latencyRecorder) ObserveAskOutcome(string)                           {}
 
 func (r *latencyRecorder) ObserveEnqueueLatency(_ string, d time.Duration) {
 	n := r.seen.Add(1)

@@ -1,6 +1,9 @@
 package actor
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 type SubmitAck struct {
 	Result    SubmitResult
@@ -64,4 +67,12 @@ func (a *ActorRef) CrossSendPID(ctx context.Context, pid PID, payload any) PIDSe
 
 func (a *ActorRef) GuardrailOutcomes() []GuardrailOutcome {
 	return a.runtime.GuardrailOutcomes(a.actorID)
+}
+
+func (a *ActorRef) Ask(ctx context.Context, payload any, timeout time.Duration) (AskResult, error) {
+	return a.runtime.Ask(ctx, a.actorID, payload, timeout)
+}
+
+func (a *ActorRef) AskOutcomes() []AskOutcome {
+	return a.runtime.AskOutcomes(a.actorID)
 }

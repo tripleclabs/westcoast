@@ -27,6 +27,7 @@ const (
 	EventLifecycleHook         EventType = "lifecycle_hook"
 	EventGuardrailDecision     EventType = "guardrail_decision"
 	EventReadinessValidation   EventType = "readiness_validation"
+	EventAskLifecycle          EventType = "ask_lifecycle"
 )
 
 type Event struct {
@@ -45,6 +46,10 @@ type Event struct {
 	LifecyclePhase      string
 	GatewayMode         string
 	ReadinessScope      string
+	RequestID           string
+	ReplyToNamespace    string
+	ReplyToActorID      string
+	ReplyToGeneration   uint64
 	Timestamp           time.Time
 	Result              string
 	ErrorCode           string

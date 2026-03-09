@@ -132,6 +132,7 @@ From [`src/actor/runtime.go`](/Volumes/Store1/src/3clabs/westcoast/src/actor/run
   - `WithStopHookTimeout(d)`
 - Messaging:
   - `ActorRef.Send(ctx, payload)`
+  - `ActorRef.Ask(ctx, payload, timeout)`
   - `ActorRef.SendPID(ctx, pid, payload)`
   - `ActorRef.CrossSendActorID(ctx, targetActorID, payload)`
   - `ActorRef.CrossSendPID(ctx, pid, payload)`
@@ -147,6 +148,30 @@ From [`src/actor/runtime.go`](/Volumes/Store1/src/3clabs/westcoast/src/actor/run
   - `Outcome(messageID)`
   - `LifecycleOutcomes(actorID)`
   - `GuardrailOutcomes(actorID)`
+  - `AskOutcomes(actorID)`
+
+## Ask Request-Response Pattern
+
+Use `Ask` when you need request-response semantics with timeout-bounded waiting.
+
+```go
+res, err := ref.Ask(context.Background(), askRequest{Value: 1}, 500*time.Millisecond)
+if err != nil {
+    // timeout/canceled/invalid target
+}
+reply := res.Payload
+```
+
+Ask-originated messages include implicit context:
+- `msg.IsAsk()`
+- `msg.AskRequestID()`
+- `msg.AskReplyTo()`
+
+This enables asynchronous delegation:
+1. Receive Ask message in handler.
+2. Capture `replyTo` + `requestID`.
+3. Delegate long work in a goroutine.
+4. Reply later via `SendPID(replyTo, ...)`.
 
 ## Feature Specs
 

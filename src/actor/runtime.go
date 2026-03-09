@@ -53,7 +53,21 @@ type Runtime struct {
 	actorPID  sync.Map // actorID -> PID
 	policyMu  sync.RWMutex
 	pidPolicy PIDInteractionPolicyMode
+	askMu     sync.Mutex
+	askSeq    atomic.Uint64
+	askWait   map[string]pendingAsk
+	askReply  map[string]string
+	askClosed map[string]string
 }
+
+type pendingAsk struct {
+	requestID   string
+	targetActor string
+	replyTo     PID
+	waitCh      chan AskReplyEnvelope
+}
+
+const askReplyNamespace = "__ask_reply"
 
 func WithEmitter(e EventEmitter) RuntimeOption {
 	return func(r *Runtime) { r.emitter = e }
@@ -79,6 +93,9 @@ func NewRuntime(opts ...RuntimeOption) *Runtime {
 		outcomes:  newOutcomeStore(),
 		resolver:  NewInMemoryPIDResolver(),
 		pidPolicy: PIDInteractionPolicyDisabled,
+		askWait:   make(map[string]pendingAsk),
+		askReply:  make(map[string]string),
+		askClosed: make(map[string]string),
 	}
 	for _, opt := range opts {
 		opt(r)
@@ -274,6 +291,31 @@ func (r *Runtime) emitReadiness(scope ReadinessScope, result ReadinessResult, ev
 		Result:      result,
 		CheckedAt:   r.now(),
 		EvidenceRef: evidence,
+	})
+}
+
+func (r *Runtime) emitAsk(actorID, requestID string, replyTo PID, outcome AskOutcomeType, code string) {
+	eid := r.eventSeq.Add(1)
+	r.emitter.Emit(Event{
+		EventID:           eid,
+		Type:              EventAskLifecycle,
+		ActorID:           actorID,
+		RequestID:         requestID,
+		ReplyToNamespace:  replyTo.Namespace,
+		ReplyToActorID:    replyTo.ActorID,
+		ReplyToGeneration: replyTo.Generation,
+		Timestamp:         r.now(),
+		Result:            string(outcome),
+		ErrorCode:         code,
+	})
+	r.metrics.ObserveAskOutcome(string(outcome))
+	r.outcomes.putAsk(AskOutcome{
+		RequestID:   requestID,
+		ActorID:     actorID,
+		ReplyTo:     replyTo,
+		Outcome:     outcome,
+		ReasonCode:  code,
+		CompletedAt: r.now(),
 	})
 }
 
@@ -506,7 +548,11 @@ func (r *Runtime) processMessage(inst *actorInstance, msg Message) {
 	r.emitLocal(EventMessageProcessed, inst.id, msg, string(ResultDelivered), "")
 }
 
-func (r *Runtime) Send(_ context.Context, actorID string, payload any) SubmitAck {
+func (r *Runtime) Send(ctx context.Context, actorID string, payload any) SubmitAck {
+	return r.sendWithAskContext(ctx, actorID, payload, nil)
+}
+
+func (r *Runtime) sendWithAskContext(_ context.Context, actorID string, payload any, askCtx *AskRequestContext) SubmitAck {
 	sendStart := r.now()
 	defer func() {
 		r.metrics.ObserveLocalSendLatency(actorID, r.now().Sub(sendStart))
@@ -539,6 +585,7 @@ func (r *Runtime) Send(_ context.Context, actorID string, payload any) SubmitAck
 		ID:            msgID,
 		ActorID:       actorID,
 		Payload:       payload,
+		Ask:           askCtx,
 		TypeName:      typeName,
 		SchemaVersion: schemaVersion,
 		AcceptedAt:    r.now(),
@@ -580,6 +627,116 @@ func (r *Runtime) Send(_ context.Context, actorID string, payload any) SubmitAck
 		r.emit(EventMessageRejected, actorID, msgID, string(ResultRejectedStop), string(SubmitRejectedStop))
 	}
 	return SubmitAck{Result: res, MessageID: msgID}
+}
+
+func (r *Runtime) newAskRequest(targetActor string) pendingAsk {
+	requestID := fmt.Sprintf("ask-%d", r.askSeq.Add(1))
+	replyTo := PID{Namespace: askReplyNamespace, ActorID: requestID, Generation: 1}
+	wait := pendingAsk{
+		requestID:   requestID,
+		targetActor: targetActor,
+		replyTo:     replyTo,
+		waitCh:      make(chan AskReplyEnvelope, 1),
+	}
+	r.askMu.Lock()
+	r.askWait[requestID] = wait
+	r.askReply[replyTo.Key()] = requestID
+	r.askMu.Unlock()
+	return wait
+}
+
+func (r *Runtime) completeAskRequest(wait pendingAsk) {
+	r.askMu.Lock()
+	delete(r.askWait, wait.requestID)
+	delete(r.askReply, wait.replyTo.Key())
+	r.askClosed[wait.requestID] = wait.targetActor
+	if len(r.askClosed) > 4096 {
+		for k := range r.askClosed {
+			delete(r.askClosed, k)
+			break
+		}
+	}
+	r.askMu.Unlock()
+}
+
+func (r *Runtime) Ask(ctx context.Context, actorID string, payload any, timeout time.Duration) (AskResult, error) {
+	if timeout <= 0 {
+		return AskResult{}, ErrAskInvalidTimeout
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	wait := r.newAskRequest(actorID)
+	ack := r.sendWithAskContext(ctx, actorID, payload, &AskRequestContext{
+		RequestID: wait.requestID,
+		ReplyTo:   wait.replyTo,
+	})
+	if ack.Result != SubmitAccepted {
+		r.completeAskRequest(wait)
+		r.emitAsk(actorID, wait.requestID, wait.replyTo, AskOutcomeReplyTargetInvalid, string(ack.Result))
+		return AskResult{}, ErrAskReplyTargetInvalid
+	}
+
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
+	select {
+	case rep := <-wait.waitCh:
+		r.completeAskRequest(wait)
+		r.emitAsk(actorID, wait.requestID, wait.replyTo, AskOutcomeSuccess, "")
+		return AskResult{RequestID: rep.RequestID, Payload: rep.Payload}, nil
+	case <-timer.C:
+		r.completeAskRequest(wait)
+		r.emitAsk(actorID, wait.requestID, wait.replyTo, AskOutcomeTimeout, ErrAskTimeout.Error())
+		return AskResult{}, ErrAskTimeout
+	case <-ctx.Done():
+		r.completeAskRequest(wait)
+		r.emitAsk(actorID, wait.requestID, wait.replyTo, AskOutcomeCanceled, ErrAskCanceled.Error())
+		return AskResult{}, ErrAskCanceled
+	}
+}
+
+func (r *Runtime) routeAskReply(pid PID, payload any, msgID uint64) (PIDSendAck, bool) {
+	if pid.Namespace != askReplyNamespace {
+		return PIDSendAck{}, false
+	}
+	replyKey := pid.Key()
+	r.askMu.Lock()
+	requestID, ok := r.askReply[replyKey]
+	if !ok {
+		targetActor, closed := r.askClosed[pid.ActorID]
+		r.askMu.Unlock()
+		if closed {
+			r.emitAsk(targetActor, pid.ActorID, pid, AskOutcomeLateReplyDropped, "ask_wait_closed")
+			return PIDSendAck{Outcome: PIDRejectedStopped, MessageID: msgID}, true
+		}
+		r.emitAsk("", pid.ActorID, pid, AskOutcomeReplyTargetInvalid, ErrAskReplyTargetInvalid.Error())
+		return PIDSendAck{Outcome: PIDRejectedNotFound, MessageID: msgID}, true
+	}
+	wait := r.askWait[requestID]
+	delete(r.askWait, requestID)
+	delete(r.askReply, replyKey)
+	r.askClosed[requestID] = wait.targetActor
+	r.askMu.Unlock()
+
+	env, isEnvelope := payload.(AskReplyEnvelope)
+	if !isEnvelope {
+		env = AskReplyEnvelope{RequestID: requestID, Payload: payload, RepliedAt: r.now()}
+	}
+	if env.RequestID == "" {
+		env.RequestID = requestID
+	}
+	if env.RequestID != requestID {
+		r.emitAsk(wait.targetActor, requestID, pid, AskOutcomeReplyTargetInvalid, "ask_request_mismatch")
+		return PIDSendAck{Outcome: PIDRejectedNotFound, MessageID: msgID}, true
+	}
+	select {
+	case wait.waitCh <- env:
+		return PIDSendAck{Outcome: PIDDelivered, MessageID: msgID}, true
+	default:
+		r.emitAsk(wait.targetActor, requestID, pid, AskOutcomeLateReplyDropped, "ask_duplicate_reply")
+		return PIDSendAck{Outcome: PIDRejectedStopped, MessageID: msgID}, true
+	}
 }
 
 func (r *Runtime) RegisterTypeRoute(actorID, typeName, schemaVersion, handlerKey string) error {
@@ -699,10 +856,19 @@ func (r *Runtime) SendPID(ctx context.Context, pid PID, payload any) PIDSendAck 
 }
 
 func (r *Runtime) sendPIDWithSender(ctx context.Context, senderActorID string, pid PID, payload any) PIDSendAck {
+	msgID := r.msgSeq.Add(1)
+	if askAck, handled := r.routeAskReply(pid, payload, msgID); handled {
+		if askAck.Outcome == PIDDelivered {
+			r.emitPID(EventPIDDelivered, pid, msgID, askAck.Outcome, "")
+		} else {
+			r.emitPID(EventPIDRejected, pid, msgID, askAck.Outcome, string(askAck.Outcome))
+		}
+		return askAck
+	}
+
 	start := r.now()
 	entry, ok := r.resolver.Resolve(pid)
 	r.metrics.ObservePIDLookupLatency(pid.Key(), r.now().Sub(start))
-	msgID := r.msgSeq.Add(1)
 	mode := r.resolver.GatewayMode()
 	guardrailActor := pid.ActorID
 	if senderActorID != "" {
@@ -790,6 +956,10 @@ func (r *Runtime) SetGatewayAvailable(available bool) {
 
 func (r *Runtime) GuardrailOutcomes(actorID string) []GuardrailOutcome {
 	return r.outcomes.guardrailByActor(actorID)
+}
+
+func (r *Runtime) AskOutcomes(actorID string) []AskOutcome {
+	return r.outcomes.askByActor(actorID)
 }
 
 func (r *Runtime) ValidateDistributedReadiness() []ReadinessValidationRecord {
