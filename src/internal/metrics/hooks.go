@@ -20,6 +20,7 @@ type Hooks interface {
 	ObserveAskOutcome(outcome string)
 	ObserveRouterOutcome(strategy string, outcome string)
 	ObserveBatchOutcome(result string)
+	ObservePubSubOutcome(operation string, result string, matchedCount int)
 }
 
 type NopHooks struct{}
@@ -41,3 +42,4 @@ func (NopHooks) ObserveGuardrailDecision(string, string)            {}
 func (NopHooks) ObserveAskOutcome(string)                           {}
 func (NopHooks) ObserveRouterOutcome(string, string)                {}
 func (NopHooks) ObserveBatchOutcome(string)                         {}
+func (NopHooks) ObservePubSubOutcome(string, string, int)           {}

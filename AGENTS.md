@@ -16,6 +16,8 @@ Auto-generated from all feature plans. Last updated: 2026-03-08
 - Go 1.24+ + Go standard library (`context`, `sync`, `sync/atomic`, `time`, `hash/fnv`) (009-actor-router-pools)
 - In-memory router configuration, pool membership, routing counters, and routing outcomes only (no persistence) (009-actor-router-pools)
 - In-memory mailbox queues, actor runtime state, and batching outcomes only (no persistence) (010-mailbox-batching)
+- Go 1.24+ + Go standard library (`context`, `sync`, `sync/atomic`, `strings`, `time`) (011-native-pubsub-broker)
+- In-memory broker subscription Trie, subscriber index maps, and broker outcomes only (no persistence) (011-native-pubsub-broker)
 
 - Go 1.24+ + Go standard library (`context`, `sync`, `sync/atomic`, `runtime`, `time`) (001-actor-execution-engine)
 
@@ -35,9 +37,9 @@ tests/
 Go 1.24+: Follow standard conventions
 
 ## Recent Changes
+- 011-native-pubsub-broker: Added Go 1.24+ + Go standard library (`context`, `sync`, `sync/atomic`, `strings`, `time`)
 - 010-mailbox-batching: Added Go 1.24+ + Go standard library (`context`, `sync`, `sync/atomic`, `time`)
 - 009-actor-router-pools: Added Go 1.24+ + Go standard library (`context`, `sync`, `sync/atomic`, `time`, `hash/fnv`)
-- 008-ask-reply-semantics: Added Go 1.24+ + Go standard library (`context`, `sync`, `sync/atomic`, `time`)
 
 
 <!-- MANUAL ADDITIONS START -->

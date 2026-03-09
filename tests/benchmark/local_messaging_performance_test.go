@@ -37,6 +37,7 @@ func (m *localPerfMetrics) ObserveGuardrailDecision(string, string)            {
 func (m *localPerfMetrics) ObserveAskOutcome(string)                           {}
 func (m *localPerfMetrics) ObserveRouterOutcome(string, string)                {}
 func (m *localPerfMetrics) ObserveBatchOutcome(string)                         {}
+func (m *localPerfMetrics) ObservePubSubOutcome(string, string, int)           {}
 func (m *localPerfMetrics) ObserveLocalSendLatency(_ string, d time.Duration) {
 	n := m.seen.Add(1)
 	if n != 1 && n%64 != 0 {

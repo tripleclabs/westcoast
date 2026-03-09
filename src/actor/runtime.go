@@ -66,6 +66,8 @@ type Runtime struct {
 	routers   map[string]*routerRuntimeState
 	randMu    sync.Mutex
 	randSrc   *rand.Rand
+	brokerMu  sync.RWMutex
+	brokers   map[string]*pubsubBrokerService
 }
 
 type pendingAsk struct {
@@ -112,6 +114,7 @@ func NewRuntime(opts ...RuntimeOption) *Runtime {
 		askClosed: make(map[string]string),
 		routers:   make(map[string]*routerRuntimeState),
 		randSrc:   rand.New(rand.NewSource(time.Now().UnixNano())),
+		brokers:   make(map[string]*pubsubBrokerService),
 	}
 	for _, opt := range opts {
 		opt(r)

@@ -44,6 +44,7 @@ func (m *pidLookupMetrics) ObserveGuardrailDecision(string, string)            {
 func (m *pidLookupMetrics) ObserveAskOutcome(string)                           {}
 func (m *pidLookupMetrics) ObserveRouterOutcome(string, string)                {}
 func (m *pidLookupMetrics) ObserveBatchOutcome(string)                         {}
+func (m *pidLookupMetrics) ObservePubSubOutcome(string, string, int)           {}
 func (m *pidLookupMetrics) ObservePIDLookupLatency(_ string, d time.Duration) {
 	n := m.seen.Add(1)
 	if n != 1 && n%64 != 0 {

@@ -10,6 +10,7 @@ type outcomeStore struct {
 	ask             []AskOutcome
 	routing         []RoutingOutcome
 	batch           []BatchOutcome
+	broker          []BrokerOutcome
 	readiness       []ReadinessValidationRecord
 	readinessCursor int
 }
@@ -24,6 +25,7 @@ func newOutcomeStore() *outcomeStore {
 		ask:       make([]AskOutcome, 0, 128),
 		routing:   make([]RoutingOutcome, 0, 256),
 		batch:     make([]BatchOutcome, 0, 256),
+		broker:    make([]BrokerOutcome, 0, 256),
 		readiness: make([]ReadinessValidationRecord, 0, readinessHistoryLimit),
 	}
 }
@@ -136,6 +138,24 @@ func (o *outcomeStore) batchByActor(actorID string) []BatchOutcome {
 	out := make([]BatchOutcome, 0, len(o.batch))
 	for _, v := range o.batch {
 		if v.ActorID == actorID {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+func (o *outcomeStore) putBroker(out BrokerOutcome) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.broker = append(o.broker, out)
+}
+
+func (o *outcomeStore) brokerByID(brokerID string) []BrokerOutcome {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	out := make([]BrokerOutcome, 0, len(o.broker))
+	for _, v := range o.broker {
+		if v.BrokerID == brokerID {
 			out = append(out, v)
 		}
 	}

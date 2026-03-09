@@ -25,6 +25,9 @@ var (
 	ErrAskInvalidTimeout      = errors.New("ask_invalid_timeout")
 	ErrAskReplyTargetInvalid  = errors.New("ask_reply_target_invalid")
 	ErrBatchConfigInvalid     = errors.New("batch_config_invalid")
+	ErrPubSubInvalidCommand   = errors.New("pubsub_invalid_command")
+	ErrPubSubInvalidPattern   = errors.New("pubsub_invalid_pattern")
+	ErrPubSubInvalidTopic     = errors.New("pubsub_invalid_topic")
 )
 
 type ActorStatus string
@@ -320,6 +323,70 @@ type RegistryLookupAck struct {
 	Result RegistryOperationResult
 	Name   string
 	PID    PID
+}
+
+type BrokerSubscribeCommand struct {
+	Subscriber PID
+	Pattern    string
+}
+
+type BrokerUnsubscribeCommand struct {
+	Subscriber PID
+	Pattern    string
+}
+
+type BrokerPublishCommand struct {
+	Topic            string
+	Payload          any
+	PublisherActorID string
+}
+
+type BrokerPublishedMessage struct {
+	Topic            string
+	Payload          any
+	PublisherActorID string
+	PublishedAt      time.Time
+}
+
+type BrokerOperation string
+
+const (
+	BrokerOperationSubscribe   BrokerOperation = "subscribe"
+	BrokerOperationUnsubscribe BrokerOperation = "unsubscribe"
+	BrokerOperationPublish     BrokerOperation = "publish"
+)
+
+type BrokerOutcomeType string
+
+const (
+	BrokerOutcomeSubscribeSuccess       BrokerOutcomeType = "subscribe_success"
+	BrokerOutcomeUnsubscribeSuccess     BrokerOutcomeType = "unsubscribe_success"
+	BrokerOutcomePublishSuccess         BrokerOutcomeType = "publish_success"
+	BrokerOutcomePublishPartialDelivery BrokerOutcomeType = "publish_partial_delivery"
+	BrokerOutcomeInvalidCommand         BrokerOutcomeType = "invalid_command"
+	BrokerOutcomeInvalidPattern         BrokerOutcomeType = "invalid_pattern"
+	BrokerOutcomeInvalidTopic           BrokerOutcomeType = "invalid_topic"
+	BrokerOutcomeTargetUnreachable      BrokerOutcomeType = "target_unreachable"
+	BrokerOutcomeNotFoundNoop           BrokerOutcomeType = "not_found_noop"
+)
+
+type BrokerCommandAck struct {
+	Operation    BrokerOperation
+	Result       BrokerOutcomeType
+	TopicPattern string
+	MatchedCount int
+	ReasonCode   string
+}
+
+type BrokerOutcome struct {
+	BrokerID     string
+	Operation    BrokerOperation
+	TopicPattern string
+	Subscriber   PID
+	MatchedCount int
+	Result       BrokerOutcomeType
+	ReasonCode   string
+	At           time.Time
 }
 
 var registryNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)

@@ -100,3 +100,7 @@ func (a *ActorRef) DisableBatching() error {
 func (a *ActorRef) BatchOutcomes() []BatchOutcome {
 	return a.runtime.BatchOutcomes(a.actorID)
 }
+
+func (a *ActorRef) BrokerOutcomes() []BrokerOutcome {
+	return a.runtime.BrokerOutcomes(a.actorID)
+}

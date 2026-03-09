@@ -30,6 +30,7 @@ const (
 	EventAskLifecycle          EventType = "ask_lifecycle"
 	EventRouterLifecycle       EventType = "router_lifecycle"
 	EventBatchLifecycle        EventType = "batch_lifecycle"
+	EventBrokerLifecycle       EventType = "broker_lifecycle"
 )
 
 type Event struct {

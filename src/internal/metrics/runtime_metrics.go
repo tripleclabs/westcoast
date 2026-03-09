@@ -18,6 +18,7 @@ type RuntimeMetrics struct {
 	askBy         map[string]int64
 	routerBy      map[string]int64
 	batchBy       map[string]int64
+	pubsubBy      map[string]int64
 }
 
 func NewRuntimeMetrics() *RuntimeMetrics {
@@ -30,6 +31,7 @@ func NewRuntimeMetrics() *RuntimeMetrics {
 		askBy:         map[string]int64{},
 		routerBy:      map[string]int64{},
 		batchBy:       map[string]int64{},
+		pubsubBy:      map[string]int64{},
 	}
 }
 
@@ -82,6 +84,12 @@ func (m *RuntimeMetrics) ObserveRouterOutcome(strategy string, outcome string) {
 func (m *RuntimeMetrics) ObserveBatchOutcome(result string) {
 	m.mu.Lock()
 	m.batchBy[result]++
+	m.mu.Unlock()
+}
+
+func (m *RuntimeMetrics) ObservePubSubOutcome(operation string, result string, _ int) {
+	m.mu.Lock()
+	m.pubsubBy[operation+":"+result]++
 	m.mu.Unlock()
 }
 
