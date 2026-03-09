@@ -16,6 +16,7 @@ type RuntimeMetrics struct {
 	lifecycleBy   map[string]int64
 	guardrailBy   map[string]int64
 	askBy         map[string]int64
+	routerBy      map[string]int64
 }
 
 func NewRuntimeMetrics() *RuntimeMetrics {
@@ -26,6 +27,7 @@ func NewRuntimeMetrics() *RuntimeMetrics {
 		lifecycleBy:   map[string]int64{},
 		guardrailBy:   map[string]int64{},
 		askBy:         map[string]int64{},
+		routerBy:      map[string]int64{},
 	}
 }
 
@@ -68,6 +70,11 @@ func (m *RuntimeMetrics) ObserveGuardrailDecision(scope string, result string) {
 func (m *RuntimeMetrics) ObserveAskOutcome(outcome string) {
 	m.mu.Lock()
 	m.askBy[outcome]++
+	m.mu.Unlock()
+}
+func (m *RuntimeMetrics) ObserveRouterOutcome(strategy string, outcome string) {
+	m.mu.Lock()
+	m.routerBy[strategy+":"+outcome]++
 	m.mu.Unlock()
 }
 

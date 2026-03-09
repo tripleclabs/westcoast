@@ -10,6 +10,10 @@ Go-native actor runtime focused on deterministic single-node execution with expl
 - Location-transparent PID addressing and generation-safe PID delivery.
 - Name registry/discovery (`register`, `lookup`, `unregister`) with lifecycle cleanup.
 - Lifecycle hooks (`Start`, `Stop`) with observable outcomes.
+- Router and worker-pool dispatch:
+  - Stateless strategies (`round_robin`, `random`).
+  - Consistent-hash sharding for `HashKey()` messages.
+  - Deterministic routing outcomes (`route_success`, `route_failed_*`).
 - Distributed-readiness guardrails:
   - PID-only cross-actor policy mode.
   - Pluggable gateway route modes (`local_direct`, `gateway_mediated`).
@@ -149,6 +153,10 @@ From [`src/actor/runtime.go`](/Volumes/Store1/src/3clabs/westcoast/src/actor/run
   - `LifecycleOutcomes(actorID)`
   - `GuardrailOutcomes(actorID)`
   - `AskOutcomes(actorID)`
+  - `RoutingOutcomes(routerID)`
+- Router surfaces:
+  - `ActorRef.ConfigureRouter(strategy, workers)`
+  - `ActorRef.Route(ctx, payload)`
 
 ## Ask Request-Response Pattern
 
@@ -184,6 +192,8 @@ Current feature sets are documented under `specs/`:
 - `005-actor-registry-discovery`
 - `006-lifecycle-hooks`
 - `007-pid-gateway-guardrails`
+- `008-ask-request-response`
+- `009-actor-router-pools`
 
 Each spec folder includes `spec.md`, `plan.md`, `tasks.md`, and supporting contract/data/research docs.
 

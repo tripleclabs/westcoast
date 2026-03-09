@@ -42,6 +42,7 @@ func (m *pidLookupMetrics) ObserveRegistryOperation(string)                    {
 func (m *pidLookupMetrics) ObserveLifecycleHook(string, string)                {}
 func (m *pidLookupMetrics) ObserveGuardrailDecision(string, string)            {}
 func (m *pidLookupMetrics) ObserveAskOutcome(string)                           {}
+func (m *pidLookupMetrics) ObserveRouterOutcome(string, string)                {}
 func (m *pidLookupMetrics) ObservePIDLookupLatency(_ string, d time.Duration) {
 	n := m.seen.Add(1)
 	if n != 1 && n%64 != 0 {

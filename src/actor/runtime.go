@@ -3,6 +3,8 @@ package actor
 import (
 	"context"
 	"fmt"
+	"hash/fnv"
+	"math/rand"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -58,6 +60,10 @@ type Runtime struct {
 	askWait   map[string]pendingAsk
 	askReply  map[string]string
 	askClosed map[string]string
+	routerMu  sync.RWMutex
+	routers   map[string]*routerRuntimeState
+	randMu    sync.Mutex
+	randSrc   *rand.Rand
 }
 
 type pendingAsk struct {
@@ -65,6 +71,12 @@ type pendingAsk struct {
 	targetActor string
 	replyTo     PID
 	waitCh      chan AskReplyEnvelope
+}
+
+type routerRuntimeState struct {
+	strategy RouterStrategy
+	workers  []string
+	rrNext   atomic.Uint64
 }
 
 const askReplyNamespace = "__ask_reply"
@@ -96,6 +108,8 @@ func NewRuntime(opts ...RuntimeOption) *Runtime {
 		askWait:   make(map[string]pendingAsk),
 		askReply:  make(map[string]string),
 		askClosed: make(map[string]string),
+		routers:   make(map[string]*routerRuntimeState),
+		randSrc:   rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
 	for _, opt := range opts {
 		opt(r)
@@ -316,6 +330,31 @@ func (r *Runtime) emitAsk(actorID, requestID string, replyTo PID, outcome AskOut
 		Outcome:     outcome,
 		ReasonCode:  code,
 		CompletedAt: r.now(),
+	})
+}
+
+func (r *Runtime) emitRouter(routerID string, messageID uint64, strategy RouterStrategy, selectedWorker string, outcome RoutingOutcomeType, code string) {
+	eid := r.eventSeq.Add(1)
+	r.emitter.Emit(Event{
+		EventID:        eid,
+		Type:           EventRouterLifecycle,
+		ActorID:        routerID,
+		MessageID:      messageID,
+		RouterStrategy: string(strategy),
+		SelectedWorker: selectedWorker,
+		Timestamp:      r.now(),
+		Result:         string(outcome),
+		ErrorCode:      code,
+	})
+	r.metrics.ObserveRouterOutcome(string(strategy), string(outcome))
+	r.outcomes.putRouting(RoutingOutcome{
+		RouterID:       routerID,
+		MessageID:      messageID,
+		Strategy:       strategy,
+		SelectedWorker: selectedWorker,
+		Outcome:        outcome,
+		ReasonCode:     code,
+		At:             r.now(),
 	})
 }
 
@@ -548,15 +587,139 @@ func (r *Runtime) processMessage(inst *actorInstance, msg Message) {
 	r.emitLocal(EventMessageProcessed, inst.id, msg, string(ResultDelivered), "")
 }
 
+func (r *Runtime) ConfigureRouter(routerID string, strategy RouterStrategy, workers []string) error {
+	if _, ok := r.registry.get(routerID); !ok {
+		return ErrActorNotFound
+	}
+	switch strategy {
+	case RouterStrategyRoundRobin, RouterStrategyRandom, RouterStrategyConsistentKey:
+	default:
+		return fmt.Errorf("invalid router strategy: %s", strategy)
+	}
+	normalized := make([]string, 0, len(workers))
+	seen := make(map[string]struct{}, len(workers))
+	for _, worker := range workers {
+		if worker == "" {
+			continue
+		}
+		if _, ok := seen[worker]; ok {
+			continue
+		}
+		seen[worker] = struct{}{}
+		normalized = append(normalized, worker)
+	}
+	r.routerMu.Lock()
+	state, ok := r.routers[routerID]
+	if !ok {
+		state = &routerRuntimeState{}
+		r.routers[routerID] = state
+	}
+	state.strategy = strategy
+	state.workers = append(state.workers[:0], normalized...)
+	state.rrNext.Store(0)
+	r.routerMu.Unlock()
+	return nil
+}
+
+func (r *Runtime) RoutingOutcomes(routerID string) []RoutingOutcome {
+	return r.outcomes.routingByRouter(routerID)
+}
+
+func (r *Runtime) Route(ctx context.Context, routerID string, payload any) SubmitAck {
+	return r.sendWithAskContext(ctx, routerID, payload, nil)
+}
+
+func (r *Runtime) routerState(actorID string) (RouterStrategy, []string, *atomic.Uint64, bool) {
+	r.routerMu.RLock()
+	defer r.routerMu.RUnlock()
+	state, ok := r.routers[actorID]
+	if !ok {
+		return "", nil, nil, false
+	}
+	return state.strategy, append([]string(nil), state.workers...), &state.rrNext, true
+}
+
+func (r *Runtime) selectRoutedWorker(strategy RouterStrategy, workers []string, rrCounter *atomic.Uint64, payload any) (string, RoutingOutcomeType, string) {
+	if len(workers) == 0 {
+		return "", RouteFailedNoWorkers, "router_no_workers"
+	}
+	switch strategy {
+	case RouterStrategyRoundRobin:
+		idx := rrCounter.Add(1) - 1
+		worker := workers[int(idx%uint64(len(workers)))]
+		return worker, RouteSuccess, ""
+	case RouterStrategyRandom:
+		r.randMu.Lock()
+		idx := r.randSrc.Intn(len(workers))
+		r.randMu.Unlock()
+		return workers[idx], RouteSuccess, ""
+	case RouterStrategyConsistentKey:
+		msg, ok := payload.(HashKeyMessage)
+		if !ok {
+			return "", RouteFailedInvalidKey, "router_missing_hash_key"
+		}
+		key := msg.HashKey()
+		if key == "" {
+			return "", RouteFailedInvalidKey, "router_empty_hash_key"
+		}
+		h := fnv.New32a()
+		_, _ = h.Write([]byte(key))
+		idx := int(h.Sum32() % uint32(len(workers)))
+		return workers[idx], RouteSuccess, ""
+	default:
+		return "", RouteFailedInvalidKey, "router_invalid_strategy"
+	}
+}
+
+func (r *Runtime) dispatchRouted(ctx context.Context, routerID string, payload any, askCtx *AskRequestContext, strategy RouterStrategy, workers []string, rrCounter *atomic.Uint64) SubmitAck {
+	msgID := r.msgSeq.Add(1)
+	selectedWorker, outcome, reason := r.selectRoutedWorker(strategy, workers, rrCounter, payload)
+	if outcome != RouteSuccess {
+		r.emitRouter(routerID, msgID, strategy, "", outcome, reason)
+		return SubmitAck{Result: SubmitRejectedFound, MessageID: msgID}
+	}
+	ack := r.sendWithAskContext(ctx, selectedWorker, payload, askCtx)
+	if ack.Result != SubmitAccepted {
+		r.emitRouter(routerID, ack.MessageID, strategy, selectedWorker, RouteFailedWorkerUnavailable, string(ack.Result))
+		return ack
+	}
+	r.emitRouter(routerID, ack.MessageID, strategy, selectedWorker, RouteSuccess, "")
+	return ack
+}
+
 func (r *Runtime) Send(ctx context.Context, actorID string, payload any) SubmitAck {
 	return r.sendWithAskContext(ctx, actorID, payload, nil)
 }
 
-func (r *Runtime) sendWithAskContext(_ context.Context, actorID string, payload any, askCtx *AskRequestContext) SubmitAck {
+func (r *Runtime) sendWithAskContext(ctx context.Context, actorID string, payload any, askCtx *AskRequestContext) SubmitAck {
 	sendStart := r.now()
 	defer func() {
 		r.metrics.ObserveLocalSendLatency(actorID, r.now().Sub(sendStart))
 	}()
+
+	if payload == nil {
+		msgID := r.msgSeq.Add(1)
+		r.outcomes.put(ProcessingOutcome{MessageID: msgID, ActorID: actorID, Result: ResultRejectedNilPayload, CompletedAt: r.now(), ErrorCode: string(SubmitRejectedNilPayload)})
+		r.emit(EventMessageRejected, actorID, msgID, string(ResultRejectedNilPayload), string(SubmitRejectedNilPayload))
+		r.metrics.ObserveLocalRouting(actorID, string(SubmitRejectedNilPayload))
+		return SubmitAck{Result: SubmitRejectedNilPayload, MessageID: msgID}
+	}
+
+	if strategy, workers, rrCounter, ok := r.routerState(actorID); ok {
+		inst, exists := r.registry.get(actorID)
+		msgID := r.msgSeq.Add(1)
+		if !exists {
+			r.outcomes.put(ProcessingOutcome{MessageID: msgID, ActorID: actorID, Result: ResultRejectedFound, CompletedAt: r.now(), ErrorCode: string(SubmitRejectedFound)})
+			r.emit(EventMessageRejected, actorID, msgID, string(ResultRejectedFound), string(SubmitRejectedFound))
+			return SubmitAck{Result: SubmitRejectedFound, MessageID: msgID}
+		}
+		if actorStatusCode(inst.status.Load()) == ActorStoppedCode {
+			r.outcomes.put(ProcessingOutcome{MessageID: msgID, ActorID: actorID, Result: ResultRejectedStop, CompletedAt: r.now(), ErrorCode: string(SubmitRejectedStop)})
+			r.emit(EventMessageRejected, actorID, msgID, string(ResultRejectedStop), string(SubmitRejectedStop))
+			return SubmitAck{Result: SubmitRejectedStop, MessageID: msgID}
+		}
+		return r.dispatchRouted(ctx, actorID, payload, askCtx, strategy, workers, rrCounter)
+	}
 
 	inst, ok := r.registry.get(actorID)
 	msgID := r.msgSeq.Add(1)
@@ -570,13 +733,6 @@ func (r *Runtime) sendWithAskContext(_ context.Context, actorID string, payload 
 		r.outcomes.put(ProcessingOutcome{MessageID: msgID, ActorID: actorID, Result: ResultRejectedStop, CompletedAt: r.now(), ErrorCode: string(SubmitRejectedStop)})
 		r.emit(EventMessageRejected, actorID, msgID, string(ResultRejectedStop), string(SubmitRejectedStop))
 		return SubmitAck{Result: SubmitRejectedStop, MessageID: msgID}
-	}
-
-	if payload == nil {
-		r.outcomes.put(ProcessingOutcome{MessageID: msgID, ActorID: actorID, Result: ResultRejectedNilPayload, CompletedAt: r.now(), ErrorCode: string(SubmitRejectedNilPayload)})
-		r.emit(EventMessageRejected, actorID, msgID, string(ResultRejectedNilPayload), string(SubmitRejectedNilPayload))
-		r.metrics.ObserveLocalRouting(actorID, string(SubmitRejectedNilPayload))
-		return SubmitAck{Result: SubmitRejectedNilPayload, MessageID: msgID}
 	}
 
 	typeName := messageTypeName(payload)

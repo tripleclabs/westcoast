@@ -225,6 +225,43 @@ type AskOutcome struct {
 	CompletedAt time.Time
 }
 
+type RouterStrategy string
+
+const (
+	RouterStrategyRoundRobin    RouterStrategy = "round_robin"
+	RouterStrategyRandom        RouterStrategy = "random"
+	RouterStrategyConsistentKey RouterStrategy = "consistent_hash"
+)
+
+type HashKeyMessage interface {
+	HashKey() string
+}
+
+type RoutingOutcomeType string
+
+const (
+	RouteSuccess                 RoutingOutcomeType = "route_success"
+	RouteFailedNoWorkers         RoutingOutcomeType = "route_failed_no_workers"
+	RouteFailedInvalidKey        RoutingOutcomeType = "route_failed_invalid_key"
+	RouteFailedWorkerUnavailable RoutingOutcomeType = "route_failed_worker_unavailable"
+)
+
+type RouterDefinition struct {
+	RouterID string
+	Strategy RouterStrategy
+	Workers  []string
+}
+
+type RoutingOutcome struct {
+	RouterID       string
+	MessageID      uint64
+	Strategy       RouterStrategy
+	SelectedWorker string
+	Outcome        RoutingOutcomeType
+	ReasonCode     string
+	At             time.Time
+}
+
 type Handler func(ctx context.Context, state any, msg Message) (nextState any, err error)
 
 type SupervisionDecision string

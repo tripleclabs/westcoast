@@ -8,6 +8,7 @@ type outcomeStore struct {
 	lifecycle       []LifecycleHookOutcome
 	guardrail       []GuardrailOutcome
 	ask             []AskOutcome
+	routing         []RoutingOutcome
 	readiness       []ReadinessValidationRecord
 	readinessCursor int
 }
@@ -20,6 +21,7 @@ func newOutcomeStore() *outcomeStore {
 		lifecycle: make([]LifecycleHookOutcome, 0, 32),
 		guardrail: make([]GuardrailOutcome, 0, 64),
 		ask:       make([]AskOutcome, 0, 128),
+		routing:   make([]RoutingOutcome, 0, 256),
 		readiness: make([]ReadinessValidationRecord, 0, readinessHistoryLimit),
 	}
 }
@@ -96,6 +98,24 @@ func (o *outcomeStore) askByActor(actorID string) []AskOutcome {
 	out := make([]AskOutcome, 0, len(o.ask))
 	for _, v := range o.ask {
 		if v.ActorID == actorID {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+func (o *outcomeStore) putRouting(out RoutingOutcome) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.routing = append(o.routing, out)
+}
+
+func (o *outcomeStore) routingByRouter(routerID string) []RoutingOutcome {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	out := make([]RoutingOutcome, 0, len(o.routing))
+	for _, v := range o.routing {
+		if v.RouterID == routerID {
 			out = append(out, v)
 		}
 	}

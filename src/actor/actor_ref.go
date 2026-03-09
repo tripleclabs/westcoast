@@ -76,3 +76,15 @@ func (a *ActorRef) Ask(ctx context.Context, payload any, timeout time.Duration) 
 func (a *ActorRef) AskOutcomes() []AskOutcome {
 	return a.runtime.AskOutcomes(a.actorID)
 }
+
+func (a *ActorRef) ConfigureRouter(strategy RouterStrategy, workers []string) error {
+	return a.runtime.ConfigureRouter(a.actorID, strategy, workers)
+}
+
+func (a *ActorRef) Route(ctx context.Context, payload any) SubmitAck {
+	return a.runtime.Route(ctx, a.actorID, payload)
+}
+
+func (a *ActorRef) RoutingOutcomes() []RoutingOutcome {
+	return a.runtime.RoutingOutcomes(a.actorID)
+}

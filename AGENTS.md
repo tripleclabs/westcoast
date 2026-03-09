@@ -13,6 +13,8 @@ Auto-generated from all feature plans. Last updated: 2026-03-08
 - In-memory runtime lifecycle state and hook execution outcomes only (no persistence) (006-lifecycle-hooks)
 - In-memory policy validation state and observability outcomes only (no persistence) (007-pid-gateway-guardrails)
 - In-memory Ask wait tracking and response-correlation state only (no persistence) (008-ask-reply-semantics)
+- Go 1.24+ + Go standard library (`context`, `sync`, `sync/atomic`, `time`, `hash/fnv`) (009-actor-router-pools)
+- In-memory router configuration, pool membership, routing counters, and routing outcomes only (no persistence) (009-actor-router-pools)
 
 - Go 1.24+ + Go standard library (`context`, `sync`, `sync/atomic`, `runtime`, `time`) (001-actor-execution-engine)
 
@@ -32,9 +34,9 @@ tests/
 Go 1.24+: Follow standard conventions
 
 ## Recent Changes
+- 009-actor-router-pools: Added Go 1.24+ + Go standard library (`context`, `sync`, `sync/atomic`, `time`, `hash/fnv`)
 - 008-ask-reply-semantics: Added Go 1.24+ + Go standard library (`context`, `sync`, `sync/atomic`, `time`)
 - 007-pid-gateway-guardrails: Added Go 1.24+ + Go standard library (`context`, `sync`, `sync/atomic`, `time`)
-- 006-lifecycle-hooks: Added Go 1.24+ + Go standard library (`context`, `sync`, `sync/atomic`, `time`)
 
 
 <!-- MANUAL ADDITIONS START -->

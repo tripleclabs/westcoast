@@ -28,6 +28,7 @@ const (
 	EventGuardrailDecision     EventType = "guardrail_decision"
 	EventReadinessValidation   EventType = "readiness_validation"
 	EventAskLifecycle          EventType = "ask_lifecycle"
+	EventRouterLifecycle       EventType = "router_lifecycle"
 )
 
 type Event struct {
@@ -50,6 +51,8 @@ type Event struct {
 	ReplyToNamespace    string
 	ReplyToActorID      string
 	ReplyToGeneration   uint64
+	RouterStrategy      string
+	SelectedWorker      string
 	Timestamp           time.Time
 	Result              string
 	ErrorCode           string
