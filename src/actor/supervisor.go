@@ -6,6 +6,7 @@ type SupervisorPolicy interface {
 
 type DefaultSupervisor struct {
 	MaxRestarts int
+	OnLimit     SupervisionDecision
 }
 
 func (d DefaultSupervisor) Decide(_ string, _ error, restartCount int) SupervisionDecision {
@@ -15,6 +16,9 @@ func (d DefaultSupervisor) Decide(_ string, _ error, restartCount int) Supervisi
 	}
 	if restartCount < max {
 		return DecisionRestart
+	}
+	if d.OnLimit == DecisionEscalate {
+		return DecisionEscalate
 	}
 	return DecisionStop
 }

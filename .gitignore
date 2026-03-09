@@ -1,5 +1,7 @@
 .envrc
+.env*
 .codex/
+*.log
 
 # Go
 *.exe

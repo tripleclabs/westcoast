@@ -8,33 +8,36 @@ import (
 type EventType string
 
 const (
-	EventActorStarted     EventType = "actor_started"
-	EventActorStopped     EventType = "actor_stopped"
-	EventActorFailed      EventType = "actor_failed"
-	EventActorRestarted   EventType = "actor_restarted"
+	EventActorStarted          EventType = "actor_started"
+	EventActorStopped          EventType = "actor_stopped"
+	EventActorFailed           EventType = "actor_failed"
+	EventActorRestarted        EventType = "actor_restarted"
+	EventActorEscalated        EventType = "actor_escalated"
 	EventMessageRoutedExact    EventType = "message_routed_exact"
 	EventMessageRoutedFallback EventType = "message_routed_fallback"
-	EventMessageProcessed EventType = "message_processed"
-	EventMessageRejected  EventType = "message_rejected"
-	EventPIDResolved      EventType = "pid_resolved"
-	EventPIDUnresolved    EventType = "pid_unresolved"
-	EventPIDRejected      EventType = "pid_rejected"
-	EventPIDDelivered     EventType = "pid_delivered"
+	EventMessageProcessed      EventType = "message_processed"
+	EventMessageRejected       EventType = "message_rejected"
+	EventPIDResolved           EventType = "pid_resolved"
+	EventPIDUnresolved         EventType = "pid_unresolved"
+	EventPIDRejected           EventType = "pid_rejected"
+	EventPIDDelivered          EventType = "pid_delivered"
 )
 
 type Event struct {
-	EventID       uint64
-	Type          EventType
-	ActorID       string
-	MessageID     uint64
-	PIDNamespace  string
-	PIDActorID    string
-	PIDGeneration uint64
-	TypeName      string
-	SchemaVersion string
-	Timestamp     time.Time
-	Result        string
-	ErrorCode     string
+	EventID             uint64
+	Type                EventType
+	ActorID             string
+	MessageID           uint64
+	PIDNamespace        string
+	PIDActorID          string
+	PIDGeneration       uint64
+	TypeName            string
+	SchemaVersion       string
+	SupervisionDecision string
+	RestartCount        int
+	Timestamp           time.Time
+	Result              string
+	ErrorCode           string
 }
 
 type EventEmitter interface {

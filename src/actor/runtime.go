@@ -26,6 +26,7 @@ type actorInstance struct {
 	state        actorState
 	initialState any
 	restarts     int
+	lastDecision SupervisionDecision
 	cancel       context.CancelFunc
 	cfg          actorConfig
 	mu           sync.RWMutex
@@ -85,7 +86,7 @@ func (r *Runtime) CreateActor(id string, initialState any, handler Handler, opts
 	if handler == nil {
 		return nil, fmt.Errorf("nil handler")
 	}
-		cfg := actorConfig{mailboxCapacity: 1024}
+	cfg := actorConfig{mailboxCapacity: 1024}
 	for _, opt := range opts {
 		opt(&cfg)
 	}
@@ -127,6 +128,21 @@ func (r *Runtime) emit(eventType EventType, actorID string, messageID uint64, re
 		Timestamp: r.now(),
 		Result:    result,
 		ErrorCode: code,
+	})
+}
+
+func (r *Runtime) emitDecision(eventType EventType, actorID string, messageID uint64, decision SupervisionDecision, restartCount int, result, code string) {
+	eid := r.eventSeq.Add(1)
+	r.emitter.Emit(Event{
+		EventID:             eid,
+		Type:                eventType,
+		ActorID:             actorID,
+		MessageID:           messageID,
+		SupervisionDecision: string(decision),
+		RestartCount:        restartCount,
+		Timestamp:           r.now(),
+		Result:              result,
+		ErrorCode:           code,
 	})
 }
 
@@ -205,13 +221,24 @@ func (r *Runtime) processMessage(inst *actorInstance, msg Message) {
 	}()
 
 	if err != nil {
-		r.outcomes.put(ProcessingOutcome{MessageID: msg.ID, ActorID: inst.id, Result: ResultFailed, CompletedAt: r.now(), ErrorCode: "handler_error"})
-		r.emit(EventActorFailed, inst.id, msg.ID, string(ResultFailed), "handler_error")
+		r.metrics.ObservePanicIntercept(inst.id)
 		decision := r.policy.Decide(inst.id, err, inst.restarts)
+		r.outcomes.put(ProcessingOutcome{
+			MessageID:            msg.ID,
+			ActorID:              inst.id,
+			Result:               ResultFailed,
+			SupervisionDecision:  decision,
+			SupervisionIteration: inst.restarts,
+			CompletedAt:          r.now(),
+			ErrorCode:            "handler_error",
+		})
+		r.emitDecision(EventActorFailed, inst.id, msg.ID, decision, inst.restarts, string(ResultFailed), "handler_error")
+		inst.lastDecision = decision
 		switch decision {
 		case DecisionRestart:
 			inst.status.Store(int32(ActorRestartCode))
 			inst.restarts++
+			r.metrics.ObserveMailboxPreservedDepth(inst.id, inst.mailbox.Depth())
 			r.metrics.ObserveRestart(inst.id)
 			inst.mu.Lock()
 			inst.state = newActorState(inst.initialState)
@@ -224,10 +251,17 @@ func (r *Runtime) processMessage(inst *actorInstance, msg Message) {
 				}
 			}
 			inst.status.Store(int32(ActorRunningCode))
-			r.emit(EventActorRestarted, inst.id, msg.ID, string(ActorRunning), "")
-		default:
+			r.emitDecision(EventActorRestarted, inst.id, msg.ID, decision, inst.restarts, string(ActorRunning), "")
+		case DecisionEscalate:
+			inst.status.Store(int32(ActorStoppedCode))
 			inst.cancel()
 			inst.mailbox.Close()
+			r.emitDecision(EventActorEscalated, inst.id, msg.ID, decision, inst.restarts, string(ActorStopped), "escalated")
+		default:
+			inst.status.Store(int32(ActorStoppedCode))
+			inst.cancel()
+			inst.mailbox.Close()
+			r.emitDecision(EventActorStopped, inst.id, msg.ID, decision, inst.restarts, string(ActorStopped), "supervisor_stop")
 		}
 		return
 	}

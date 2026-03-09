@@ -37,7 +37,9 @@ func (m *RuntimeMetrics) ObserveLocalRouting(_ string, outcome string) {
 	m.localByResult[outcome]++
 	m.mu.Unlock()
 }
-func (m *RuntimeMetrics) ObserveRestart(string)                          {}
+func (m *RuntimeMetrics) ObservePanicIntercept(string)             {}
+func (m *RuntimeMetrics) ObserveMailboxPreservedDepth(string, int) {}
+func (m *RuntimeMetrics) ObserveRestart(string)                    {}
 
 func (m *RuntimeMetrics) ObservePIDLookupLatency(_ string, d time.Duration) {
 	m.mu.Lock()

@@ -66,9 +66,11 @@ func (r *latencyRecorder) ObserveProcessingLatency(string, time.Duration) {}
 func (r *latencyRecorder) ObserveLocalSendLatency(_ string, d time.Duration) {
 	r.ObserveEnqueueLatency("", d)
 }
-func (r *latencyRecorder) ObserveLocalRouting(string, string) {}
-func (r *latencyRecorder) ObserveRestart(string)                          {}
-func (r *latencyRecorder) ObservePIDLookupLatency(string, time.Duration)  {}
+func (r *latencyRecorder) ObserveLocalRouting(string, string)            {}
+func (r *latencyRecorder) ObservePanicIntercept(string)                  {}
+func (r *latencyRecorder) ObserveMailboxPreservedDepth(string, int)      {}
+func (r *latencyRecorder) ObserveRestart(string)                         {}
+func (r *latencyRecorder) ObservePIDLookupLatency(string, time.Duration) {}
 
 func (r *latencyRecorder) ObserveEnqueueLatency(_ string, d time.Duration) {
 	n := r.seen.Add(1)

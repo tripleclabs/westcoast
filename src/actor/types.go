@@ -68,11 +68,13 @@ const (
 )
 
 type ProcessingOutcome struct {
-	MessageID   uint64
-	ActorID     string
-	Result      ProcessingResult
-	CompletedAt time.Time
-	ErrorCode   string
+	MessageID            uint64
+	ActorID              string
+	Result               ProcessingResult
+	SupervisionDecision  SupervisionDecision
+	SupervisionIteration int
+	CompletedAt          time.Time
+	ErrorCode            string
 }
 
 type Handler func(ctx context.Context, state any, msg Message) (nextState any, err error)

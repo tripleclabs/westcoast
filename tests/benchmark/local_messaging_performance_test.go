@@ -26,6 +26,8 @@ func (m *localPerfMetrics) ObserveMailboxDepth(string, int)                {}
 func (m *localPerfMetrics) ObserveEnqueueLatency(string, time.Duration)    {}
 func (m *localPerfMetrics) ObserveProcessingLatency(string, time.Duration) {}
 func (m *localPerfMetrics) ObserveLocalRouting(string, string)             {}
+func (m *localPerfMetrics) ObservePanicIntercept(string)                   {}
+func (m *localPerfMetrics) ObserveMailboxPreservedDepth(string, int)       {}
 func (m *localPerfMetrics) ObserveRestart(string)                          {}
 func (m *localPerfMetrics) ObservePIDLookupLatency(string, time.Duration)  {}
 func (m *localPerfMetrics) ObserveLocalSendLatency(_ string, d time.Duration) {
