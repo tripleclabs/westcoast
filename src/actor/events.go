@@ -25,6 +25,8 @@ const (
 	EventRegistryLookup        EventType = "registry_lookup"
 	EventRegistryUnregister    EventType = "registry_unregister"
 	EventLifecycleHook         EventType = "lifecycle_hook"
+	EventGuardrailDecision     EventType = "guardrail_decision"
+	EventReadinessValidation   EventType = "readiness_validation"
 )
 
 type Event struct {
@@ -41,6 +43,8 @@ type Event struct {
 	RestartCount        int
 	RegistryName        string
 	LifecyclePhase      string
+	GatewayMode         string
+	ReadinessScope      string
 	Timestamp           time.Time
 	Result              string
 	ErrorCode           string

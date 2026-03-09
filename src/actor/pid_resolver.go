@@ -17,16 +17,27 @@ type PIDResolver interface {
 	Resolve(pid PID) (PIDResolverEntry, bool)
 	SetState(pid PID, state PIDRouteState)
 	BumpGeneration(pid PID) (PID, bool)
+	SetGatewayMode(mode GatewayRouteMode)
+	GatewayMode() GatewayRouteMode
+	SetGatewayAvailability(available bool)
+	GatewayAvailable() bool
 }
 
 type InMemoryPIDResolver struct {
 	mu    sync.RWMutex
 	byKey map[string]PIDResolverEntry
 	now   func() time.Time
+	mode  GatewayRouteMode
+	gwUp  bool
 }
 
 func NewInMemoryPIDResolver() *InMemoryPIDResolver {
-	return &InMemoryPIDResolver{byKey: map[string]PIDResolverEntry{}, now: time.Now}
+	return &InMemoryPIDResolver{
+		byKey: map[string]PIDResolverEntry{},
+		now:   time.Now,
+		mode:  GatewayRouteLocalDirect,
+		gwUp:  true,
+	}
 }
 
 func (r *InMemoryPIDResolver) Register(pid PID) {
@@ -67,4 +78,28 @@ func (r *InMemoryPIDResolver) BumpGeneration(pid PID) (PID, bool) {
 	entry.UpdatedAt = r.now()
 	r.byKey[pid.Key()] = entry
 	return entry.PID, true
+}
+
+func (r *InMemoryPIDResolver) SetGatewayMode(mode GatewayRouteMode) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.mode = mode
+}
+
+func (r *InMemoryPIDResolver) GatewayMode() GatewayRouteMode {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.mode
+}
+
+func (r *InMemoryPIDResolver) SetGatewayAvailability(available bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.gwUp = available
+}
+
+func (r *InMemoryPIDResolver) GatewayAvailable() bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.gwUp
 }

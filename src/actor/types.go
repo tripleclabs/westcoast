@@ -18,6 +18,8 @@ var (
 	ErrRegistryNameNotFound   = errors.New("registry_name_not_found")
 	ErrLifecycleStartFailed   = errors.New("lifecycle_start_failed")
 	ErrLifecycleStopFailed    = errors.New("lifecycle_stop_failed")
+	ErrNonPIDCrossActor       = errors.New("non_pid_cross_actor_rejected")
+	ErrGatewayRouteFailed     = errors.New("gateway_route_failed")
 )
 
 type ActorStatus string
@@ -54,6 +56,60 @@ type LifecycleHookOutcome struct {
 	Result      LifecycleHookResult
 	CompletedAt time.Time
 	ErrorCode   string
+}
+
+type PIDInteractionPolicyMode string
+
+const (
+	PIDInteractionPolicyDisabled PIDInteractionPolicyMode = "disabled"
+	PIDInteractionPolicyPIDOnly  PIDInteractionPolicyMode = "pid_only"
+)
+
+type GatewayRouteMode string
+
+const (
+	GatewayRouteLocalDirect     GatewayRouteMode = "local_direct"
+	GatewayRouteGatewayMediated GatewayRouteMode = "gateway_mediated"
+)
+
+type GuardrailOutcomeType string
+
+const (
+	GuardrailPolicyAccept        GuardrailOutcomeType = "policy_accept"
+	GuardrailPolicyRejectNonPID  GuardrailOutcomeType = "policy_reject_non_pid"
+	GuardrailGatewayRouteSuccess GuardrailOutcomeType = "gateway_route_success"
+	GuardrailGatewayRouteFailure GuardrailOutcomeType = "gateway_route_failure"
+)
+
+type GuardrailOutcome struct {
+	ActorID     string
+	PolicyMode  PIDInteractionPolicyMode
+	GatewayMode GatewayRouteMode
+	Outcome     GuardrailOutcomeType
+	ReasonCode  string
+	At          time.Time
+}
+
+type ReadinessScope string
+
+const (
+	ReadinessScopePIDPolicy            ReadinessScope = "pid_policy"
+	ReadinessScopeGatewayBoundary      ReadinessScope = "gateway_boundary"
+	ReadinessScopeLocationTransparency ReadinessScope = "location_transparency"
+)
+
+type ReadinessResult string
+
+const (
+	ReadinessPass ReadinessResult = "pass"
+	ReadinessFail ReadinessResult = "fail"
+)
+
+type ReadinessValidationRecord struct {
+	Scope       ReadinessScope
+	Result      ReadinessResult
+	CheckedAt   time.Time
+	EvidenceRef string
 }
 
 type SubmitResult string

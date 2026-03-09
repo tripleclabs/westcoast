@@ -53,3 +53,15 @@ func (a *ActorRef) RegisterName(name string) (RegistryRegisterAck, error) {
 func (a *ActorRef) LifecycleOutcomes() []LifecycleHookOutcome {
 	return a.runtime.LifecycleOutcomes(a.actorID)
 }
+
+func (a *ActorRef) CrossSendActorID(ctx context.Context, targetActorID string, payload any) SubmitAck {
+	return a.runtime.CrossActorSendByActorID(ctx, a.actorID, targetActorID, payload)
+}
+
+func (a *ActorRef) CrossSendPID(ctx context.Context, pid PID, payload any) PIDSendAck {
+	return a.runtime.CrossActorSendPID(ctx, a.actorID, pid, payload)
+}
+
+func (a *ActorRef) GuardrailOutcomes() []GuardrailOutcome {
+	return a.runtime.GuardrailOutcomes(a.actorID)
+}

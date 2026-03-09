@@ -14,6 +14,7 @@ type RuntimeMetrics struct {
 	localSent     int64
 	localByResult map[string]int64
 	lifecycleBy   map[string]int64
+	guardrailBy   map[string]int64
 }
 
 func NewRuntimeMetrics() *RuntimeMetrics {
@@ -22,6 +23,7 @@ func NewRuntimeMetrics() *RuntimeMetrics {
 		localSendNs:   make([]int64, 0, 4096),
 		localByResult: map[string]int64{},
 		lifecycleBy:   map[string]int64{},
+		guardrailBy:   map[string]int64{},
 	}
 }
 
@@ -54,6 +56,11 @@ func (m *RuntimeMetrics) ObserveRegistryOperation(_ string)                     
 func (m *RuntimeMetrics) ObserveLifecycleHook(phase string, result string) {
 	m.mu.Lock()
 	m.lifecycleBy[phase+":"+result]++
+	m.mu.Unlock()
+}
+func (m *RuntimeMetrics) ObserveGuardrailDecision(scope string, result string) {
+	m.mu.Lock()
+	m.guardrailBy[scope+":"+result]++
 	m.mu.Unlock()
 }
 

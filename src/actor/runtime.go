@@ -37,18 +37,19 @@ type actorInstance struct {
 }
 
 type Runtime struct {
-	registry *actorRegistry
-	names    *namedRegistry
-	emitter  EventEmitter
-	policy   SupervisorPolicy
-	metrics  metrics.Hooks
-	routing  *typeRoutingRegistry
-	now      func() time.Time
-	msgSeq   atomic.Uint64
-	eventSeq atomic.Uint64
-	outcomes *outcomeStore
-	resolver PIDResolver
-	actorPID sync.Map // actorID -> PID
+	registry  *actorRegistry
+	names     *namedRegistry
+	emitter   EventEmitter
+	policy    SupervisorPolicy
+	metrics   metrics.Hooks
+	routing   *typeRoutingRegistry
+	now       func() time.Time
+	msgSeq    atomic.Uint64
+	eventSeq  atomic.Uint64
+	outcomes  *outcomeStore
+	resolver  PIDResolver
+	actorPID  sync.Map // actorID -> PID
+	pidPolicy PIDInteractionPolicyMode
 }
 
 func WithEmitter(e EventEmitter) RuntimeOption {
@@ -65,15 +66,16 @@ func WithMetrics(h metrics.Hooks) RuntimeOption {
 
 func NewRuntime(opts ...RuntimeOption) *Runtime {
 	r := &Runtime{
-		registry: newRegistry(),
-		names:    newNamedRegistry(time.Now),
-		emitter:  NopEmitter{},
-		policy:   DefaultSupervisor{MaxRestarts: 1},
-		metrics:  metrics.NopHooks{},
-		routing:  newTypeRoutingRegistry(),
-		now:      time.Now,
-		outcomes: newOutcomeStore(),
-		resolver: NewInMemoryPIDResolver(),
+		registry:  newRegistry(),
+		names:     newNamedRegistry(time.Now),
+		emitter:   NopEmitter{},
+		policy:    DefaultSupervisor{MaxRestarts: 1},
+		metrics:   metrics.NopHooks{},
+		routing:   newTypeRoutingRegistry(),
+		now:       time.Now,
+		outcomes:  newOutcomeStore(),
+		resolver:  NewInMemoryPIDResolver(),
+		pidPolicy: PIDInteractionPolicyDisabled,
 	}
 	for _, opt := range opts {
 		opt(r)
@@ -223,6 +225,47 @@ func (r *Runtime) emitLifecycle(actorID string, phase LifecycleHookPhase, result
 		ErrorCode:      code,
 	})
 	r.metrics.ObserveLifecycleHook(string(phase), string(result))
+}
+
+func (r *Runtime) emitGuardrail(actorID string, mode GatewayRouteMode, outcome GuardrailOutcomeType, code string) {
+	eid := r.eventSeq.Add(1)
+	r.emitter.Emit(Event{
+		EventID:     eid,
+		Type:        EventGuardrailDecision,
+		ActorID:     actorID,
+		GatewayMode: string(mode),
+		Timestamp:   r.now(),
+		Result:      string(outcome),
+		ErrorCode:   code,
+	})
+	r.metrics.ObserveGuardrailDecision("guardrail", string(outcome))
+	r.outcomes.putGuardrail(GuardrailOutcome{
+		ActorID:     actorID,
+		PolicyMode:  r.pidPolicy,
+		GatewayMode: mode,
+		Outcome:     outcome,
+		ReasonCode:  code,
+		At:          r.now(),
+	})
+}
+
+func (r *Runtime) emitReadiness(scope ReadinessScope, result ReadinessResult, evidence string) {
+	eid := r.eventSeq.Add(1)
+	r.emitter.Emit(Event{
+		EventID:        eid,
+		Type:           EventReadinessValidation,
+		ReadinessScope: string(scope),
+		Timestamp:      r.now(),
+		Result:         string(result),
+		ErrorCode:      evidence,
+	})
+	r.metrics.ObserveGuardrailDecision(string(scope), string(result))
+	r.outcomes.putReadiness(ReadinessValidationRecord{
+		Scope:       scope,
+		Result:      result,
+		CheckedAt:   r.now(),
+		EvidenceRef: evidence,
+	})
 }
 
 func (r *Runtime) runLifecycleHook(inst *actorInstance, phase LifecycleHookPhase, h LifecycleHook) error {
@@ -574,33 +617,113 @@ func (r *Runtime) ResolvePID(pid PID) (PIDResolverEntry, bool) {
 }
 
 func (r *Runtime) SendPID(ctx context.Context, pid PID, payload any) PIDSendAck {
+	return r.sendPIDWithSender(ctx, "", pid, payload)
+}
+
+func (r *Runtime) sendPIDWithSender(ctx context.Context, senderActorID string, pid PID, payload any) PIDSendAck {
 	start := r.now()
 	entry, ok := r.resolver.Resolve(pid)
 	r.metrics.ObservePIDLookupLatency(pid.Key(), r.now().Sub(start))
 	msgID := r.msgSeq.Add(1)
+	mode := r.resolver.GatewayMode()
+	guardrailActor := pid.ActorID
+	if senderActorID != "" {
+		guardrailActor = senderActorID
+	}
 	if !ok {
 		if _, exists := r.registry.get(pid.ActorID); !exists {
 			r.emitPID(EventPIDRejected, pid, msgID, PIDRejectedNotFound, string(PIDRejectedNotFound))
+			r.emitGuardrail(guardrailActor, mode, GuardrailGatewayRouteFailure, string(PIDRejectedNotFound))
 			return PIDSendAck{Outcome: PIDRejectedNotFound, MessageID: msgID}
 		}
 		r.emitPID(EventPIDUnresolved, pid, msgID, PIDUnresolved, string(PIDUnresolved))
+		r.emitGuardrail(guardrailActor, mode, GuardrailGatewayRouteFailure, string(PIDUnresolved))
 		return PIDSendAck{Outcome: PIDUnresolved, MessageID: msgID}
 	}
 	if entry.RouteState == PIDRouteStopped {
 		r.emitPID(EventPIDRejected, pid, msgID, PIDRejectedStopped, string(PIDRejectedStopped))
+		r.emitGuardrail(guardrailActor, mode, GuardrailGatewayRouteFailure, string(PIDRejectedStopped))
 		return PIDSendAck{Outcome: PIDRejectedStopped, MessageID: msgID}
 	}
 	if pid.Generation != entry.CurrentGeneration {
 		r.emitPID(EventPIDRejected, pid, msgID, PIDRejectedStaleGeneration, string(PIDRejectedStaleGeneration))
+		r.emitGuardrail(guardrailActor, mode, GuardrailGatewayRouteFailure, string(PIDRejectedStaleGeneration))
 		return PIDSendAck{Outcome: PIDRejectedStaleGeneration, MessageID: msgID}
+	}
+	if mode == GatewayRouteGatewayMediated && !r.resolver.GatewayAvailable() {
+		r.emitPID(EventPIDRejected, pid, msgID, PIDUnresolved, ErrGatewayRouteFailed.Error())
+		r.emitGuardrail(guardrailActor, mode, GuardrailGatewayRouteFailure, ErrGatewayRouteFailed.Error())
+		return PIDSendAck{Outcome: PIDUnresolved, MessageID: msgID}
 	}
 	ack := r.Send(ctx, pid.ActorID, payload)
 	if ack.Result != SubmitAccepted {
 		r.emitPID(EventPIDRejected, pid, ack.MessageID, PIDRejectedStopped, string(PIDRejectedStopped))
+		r.emitGuardrail(guardrailActor, mode, GuardrailGatewayRouteFailure, string(PIDRejectedStopped))
 		return PIDSendAck{Outcome: PIDRejectedStopped, MessageID: ack.MessageID}
 	}
 	r.emitPID(EventPIDDelivered, pid, ack.MessageID, PIDDelivered, "")
+	r.emitGuardrail(guardrailActor, mode, GuardrailGatewayRouteSuccess, "")
 	return PIDSendAck{Outcome: PIDDelivered, MessageID: ack.MessageID}
+}
+
+func (r *Runtime) CrossActorSendByActorID(_ context.Context, senderActorID, targetActorID string, payload any) SubmitAck {
+	msgID := r.msgSeq.Add(1)
+	if r.pidPolicy == PIDInteractionPolicyPIDOnly && senderActorID != "" && senderActorID != targetActorID {
+		r.outcomes.put(ProcessingOutcome{
+			MessageID:   msgID,
+			ActorID:     targetActorID,
+			Result:      ResultRejectedFound,
+			CompletedAt: r.now(),
+			ErrorCode:   ErrNonPIDCrossActor.Error(),
+		})
+		r.emitGuardrail(senderActorID, r.resolver.GatewayMode(), GuardrailPolicyRejectNonPID, ErrNonPIDCrossActor.Error())
+		return SubmitAck{Result: SubmitRejectedFound, MessageID: msgID}
+	}
+	r.emitGuardrail(senderActorID, r.resolver.GatewayMode(), GuardrailPolicyAccept, "")
+	return r.Send(context.Background(), targetActorID, payload)
+}
+
+func (r *Runtime) CrossActorSendPID(ctx context.Context, senderActorID string, target PID, payload any) PIDSendAck {
+	if r.pidPolicy == PIDInteractionPolicyPIDOnly {
+		r.emitGuardrail(senderActorID, r.resolver.GatewayMode(), GuardrailPolicyAccept, "")
+	}
+	return r.sendPIDWithSender(ctx, senderActorID, target, payload)
+}
+
+func (r *Runtime) SetPIDInteractionPolicy(mode PIDInteractionPolicyMode) {
+	r.pidPolicy = mode
+}
+
+func (r *Runtime) PIDInteractionPolicy() PIDInteractionPolicyMode {
+	return r.pidPolicy
+}
+
+func (r *Runtime) SetGatewayRouteMode(mode GatewayRouteMode) {
+	r.resolver.SetGatewayMode(mode)
+}
+
+func (r *Runtime) SetGatewayAvailable(available bool) {
+	r.resolver.SetGatewayAvailability(available)
+}
+
+func (r *Runtime) GuardrailOutcomes(actorID string) []GuardrailOutcome {
+	return r.outcomes.guardrailByActor(actorID)
+}
+
+func (r *Runtime) ValidateDistributedReadiness() []ReadinessValidationRecord {
+	mode := r.pidPolicy
+	if mode == PIDInteractionPolicyPIDOnly {
+		r.emitReadiness(ReadinessScopePIDPolicy, ReadinessPass, "")
+	} else {
+		r.emitReadiness(ReadinessScopePIDPolicy, ReadinessFail, "pid_policy_not_enforced")
+	}
+	if r.resolver.GatewayMode() == GatewayRouteLocalDirect || r.resolver.GatewayMode() == GatewayRouteGatewayMediated {
+		r.emitReadiness(ReadinessScopeGatewayBoundary, ReadinessPass, "")
+	} else {
+		r.emitReadiness(ReadinessScopeGatewayBoundary, ReadinessFail, "invalid_gateway_mode")
+	}
+	r.emitReadiness(ReadinessScopeLocationTransparency, ReadinessPass, "")
+	return r.outcomes.readinessAll()
 }
 
 func (r *Runtime) RegisterName(actorID, name, namespace string) (RegistryRegisterAck, error) {
