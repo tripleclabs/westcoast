@@ -3,7 +3,7 @@ package integration_test
 import (
 	"testing"
 
-	"westcoast/src/actor"
+	"github.com/tripleclabs/westcoast/src/actor"
 )
 
 func assertRegisterSuccess(t *testing.T, ack actor.RegistryRegisterAck, err error) {

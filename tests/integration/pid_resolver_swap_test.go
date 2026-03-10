@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"westcoast/src/actor"
+	"github.com/tripleclabs/westcoast/src/actor"
 )
 
 func TestPIDResolverSwapContractStability(t *testing.T) {

@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"westcoast/src/actor"
+	"github.com/tripleclabs/westcoast/src/actor"
 )
 
 func waitForBrokerOutcome(t *testing.T, broker *actor.ActorRef, timeout time.Duration, want actor.BrokerOutcomeType) actor.BrokerOutcome {

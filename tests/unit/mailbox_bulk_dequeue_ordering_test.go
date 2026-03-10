@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"westcoast/src/actor"
+	"github.com/tripleclabs/westcoast/src/actor"
 )
 
 func TestMailboxBulkDequeueOrderingAndBounds(t *testing.T) {

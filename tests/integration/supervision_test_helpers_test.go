@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"westcoast/src/actor"
+	"github.com/tripleclabs/westcoast/src/actor"
 )
 
 func assertActorLivenessAfterPeerPanic(t *testing.T, rt *actor.Runtime, healthy *actor.ActorRef, panicking *actor.ActorRef) {

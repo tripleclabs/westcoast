@@ -6,7 +6,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"westcoast/src/actor"
+	"github.com/tripleclabs/westcoast/src/actor"
 )
 
 func TestRegistryConcurrentDuplicateDeterminism(t *testing.T) {

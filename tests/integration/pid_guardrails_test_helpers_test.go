@@ -3,7 +3,7 @@ package integration_test
 import (
 	"testing"
 
-	"westcoast/src/actor"
+	"github.com/tripleclabs/westcoast/src/actor"
 )
 
 func assertGuardrailOutcome(t *testing.T, outs []actor.GuardrailOutcome, want actor.GuardrailOutcomeType) {

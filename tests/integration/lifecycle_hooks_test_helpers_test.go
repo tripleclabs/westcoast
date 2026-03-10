@@ -3,7 +3,7 @@ package integration_test
 import (
 	"testing"
 
-	"westcoast/src/actor"
+	"github.com/tripleclabs/westcoast/src/actor"
 )
 
 func assertLifecycleResult(t *testing.T, outcomes []actor.LifecycleHookOutcome, phase actor.LifecycleHookPhase, result actor.LifecycleHookResult) {

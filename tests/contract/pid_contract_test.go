@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"westcoast/src/actor"
+	"github.com/tripleclabs/westcoast/src/actor"
 )
 
 func noop(_ context.Context, state any, _ actor.Message) (any, error) { return state, nil }

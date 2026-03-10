@@ -5,7 +5,7 @@ import (
 	"sync"
 	"testing"
 
-	"westcoast/src/actor"
+	"github.com/tripleclabs/westcoast/src/actor"
 )
 
 func TestLifecycleHooksConcurrentStartStopInterleavings(t *testing.T) {

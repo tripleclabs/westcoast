@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"westcoast/src/actor"
+	"github.com/tripleclabs/westcoast/src/actor"
 )
 
 func restartingHandler(_ context.Context, state any, msg actor.Message) (any, error) {

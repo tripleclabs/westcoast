@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"westcoast/src/internal/metrics"
+	"github.com/tripleclabs/westcoast/src/internal/metrics"
 )
 
 type RuntimeOption func(*Runtime)

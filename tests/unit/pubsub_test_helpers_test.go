@@ -1,6 +1,6 @@
 package unit_test
 
-import "westcoast/src/actor"
+import "github.com/tripleclabs/westcoast/src/actor"
 
 func hasBrokerOutcome(outcomes []actor.BrokerOutcome, want actor.BrokerOutcomeType) bool {
 	for _, out := range outcomes {

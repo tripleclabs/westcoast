@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"westcoast/src/actor"
+	"github.com/tripleclabs/westcoast/src/actor"
 )
 
 func TestBrokerInvalidCommandOutcome(t *testing.T) {

@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"westcoast/src/actor"
+	"github.com/tripleclabs/westcoast/src/actor"
 )
 
 func panicHandler(_ context.Context, state any, msg actor.Message) (any, error) {

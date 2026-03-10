@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"westcoast/src/actor"
+	"github.com/tripleclabs/westcoast/src/actor"
 )
 
 func TestInvalidBatchConfigIsDeterministic(t *testing.T) {

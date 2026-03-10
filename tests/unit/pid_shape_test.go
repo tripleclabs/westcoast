@@ -3,7 +3,7 @@ package unit_test
 import (
 	"testing"
 
-	"westcoast/src/actor"
+	"github.com/tripleclabs/westcoast/src/actor"
 )
 
 func TestPIDCanonicalShape(t *testing.T) {
