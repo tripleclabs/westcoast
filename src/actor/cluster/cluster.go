@@ -15,6 +15,10 @@ type ClusterConfig struct {
 	Auth      ClusterAuth
 	Codec     Codec
 
+	// Topology controls which nodes to connect to and how messages are
+	// routed. Defaults to FullMeshTopology if nil.
+	Topology Topology
+
 	// OnEnvelope is called when an envelope arrives from a remote node.
 	// Set by the Runtime integration layer (Phase 2).
 	OnEnvelope func(from NodeID, env Envelope)
@@ -54,6 +58,9 @@ func NewCluster(cfg ClusterConfig) (*Cluster, error) {
 	}
 	if cfg.Codec == nil {
 		cfg.Codec = NewGobCodec()
+	}
+	if cfg.Topology == nil {
+		cfg.Topology = FullMeshTopology{}
 	}
 	return &Cluster{
 		cfg:   cfg,
@@ -136,30 +143,77 @@ func (c *Cluster) Members() []NodeMeta {
 }
 
 // SendRemote sends an envelope to a specific remote node.
+// If a direct connection exists, uses it. Otherwise, uses the topology
+// to find the next hop and forwards through an intermediate node.
 func (c *Cluster) SendRemote(ctx context.Context, target NodeID, env Envelope) error {
-	c.mu.RLock()
-	conn, ok := c.conns[target]
-	c.mu.RUnlock()
-
-	if !ok {
-		// Try to establish a connection on demand.
-		var err error
-		conn, err = c.ensureConnection(ctx, target)
-		if err != nil {
-			return fmt.Errorf("%w: %v", ErrNodeUnreachable, err)
-		}
-	}
-
 	if env.SentAtUnixNano == 0 {
 		env.SentAtUnixNano = time.Now().UnixNano()
 	}
 
-	if err := conn.Send(ctx, env); err != nil {
-		// Connection may be dead; remove it so next send retries.
-		c.removeConnection(target)
+	// Try direct connection first.
+	c.mu.RLock()
+	conn, directOK := c.conns[target]
+	c.mu.RUnlock()
+
+	if directOK {
+		if err := conn.Send(ctx, env); err != nil {
+			c.removeConnection(target)
+			return fmt.Errorf("%w: %v", ErrSendFailed, err)
+		}
+		return nil
+	}
+
+	// No direct connection — use topology to find next hop.
+	c.mu.RLock()
+	members := c.memberListLocked()
+	c.mu.RUnlock()
+
+	nextHop, ok := c.cfg.Topology.Route(c.cfg.Self.ID, target, members)
+	if !ok {
+		return fmt.Errorf("%w: no route to %s", ErrNodeUnreachable, target)
+	}
+
+	// If the next hop IS the target, try to connect on demand.
+	if nextHop == target {
+		conn, err := c.ensureConnection(ctx, target)
+		if err != nil {
+			return fmt.Errorf("%w: %v", ErrNodeUnreachable, err)
+		}
+		if err := conn.Send(ctx, env); err != nil {
+			c.removeConnection(target)
+			return fmt.Errorf("%w: %v", ErrSendFailed, err)
+		}
+		return nil
+	}
+
+	// Forward through intermediate node. The envelope's TargetNode stays
+	// the same — the intermediate node will forward it onward.
+	c.mu.RLock()
+	hopConn, hopOK := c.conns[nextHop]
+	c.mu.RUnlock()
+
+	if !hopOK {
+		hopConn2, err := c.ensureConnection(ctx, nextHop)
+		if err != nil {
+			return fmt.Errorf("%w: no connection to next hop %s", ErrNodeUnreachable, nextHop)
+		}
+		hopConn = hopConn2
+	}
+
+	if err := hopConn.Send(ctx, env); err != nil {
+		c.removeConnection(nextHop)
 		return fmt.Errorf("%w: %v", ErrSendFailed, err)
 	}
 	return nil
+}
+
+func (c *Cluster) memberListLocked() []NodeMeta {
+	out := make([]NodeMeta, 0, len(c.peers)+1)
+	out = append(out, c.cfg.Self)
+	for _, m := range c.peers {
+		out = append(out, m)
+	}
+	return out
 }
 
 // IsConnected returns whether a direct connection to the target exists.
@@ -217,17 +271,44 @@ func (c *Cluster) handleMemberEvent(ev MemberEvent) {
 	switch ev.Type {
 	case MemberJoin, MemberUpdated:
 		c.peers[ev.Member.ID] = ev.Member
-		// Proactively connect to new peers.
-		if _, connected := c.conns[ev.Member.ID]; !connected {
-			meta := ev.Member
-			go c.dialPeer(meta)
-		}
 
 	case MemberLeave, MemberFailed:
 		delete(c.peers, ev.Member.ID)
 		if conn, ok := c.conns[ev.Member.ID]; ok {
 			conn.Close()
 			delete(c.conns, ev.Member.ID)
+		}
+	}
+
+	// Recompute desired connections based on topology.
+	c.reconcileConnectionsLocked()
+}
+
+// reconcileConnectionsLocked adjusts connections to match the topology's
+// ShouldConnect output. Must be called with c.mu held.
+func (c *Cluster) reconcileConnectionsLocked() {
+	members := c.memberListLocked()
+	desired := c.cfg.Topology.ShouldConnect(c.cfg.Self.ID, members)
+
+	desiredSet := make(map[NodeID]bool, len(desired))
+	for _, id := range desired {
+		desiredSet[id] = true
+	}
+
+	// Dial nodes we should be connected to but aren't.
+	for _, id := range desired {
+		if _, connected := c.conns[id]; !connected {
+			if meta, known := c.peers[id]; known {
+				go c.dialPeer(meta)
+			}
+		}
+	}
+
+	// Close connections to nodes we no longer need.
+	for id, conn := range c.conns {
+		if !desiredSet[id] {
+			conn.Close()
+			delete(c.conns, id)
 		}
 	}
 }

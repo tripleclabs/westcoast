@@ -21,10 +21,12 @@ type RuntimeBridge interface {
 }
 
 // InboundDispatcher handles envelopes arriving from remote nodes.
-// It decodes the payload and routes to the local Runtime.
+// It decodes the payload and routes to the local Runtime, or forwards
+// the envelope to the next hop if the target is a different node.
 type InboundDispatcher struct {
-	bridge RuntimeBridge
-	codec  Codec
+	bridge  RuntimeBridge
+	codec   Codec
+	cluster *Cluster // non-nil enables multi-hop forwarding
 }
 
 func NewInboundDispatcher(bridge RuntimeBridge, codec Codec) *InboundDispatcher {
@@ -34,8 +36,19 @@ func NewInboundDispatcher(bridge RuntimeBridge, codec Codec) *InboundDispatcher 
 	}
 }
 
+// SetCluster enables multi-hop forwarding through the cluster.
+func (d *InboundDispatcher) SetCluster(c *Cluster) {
+	d.cluster = c
+}
+
 // Dispatch processes an incoming envelope from a remote node.
 func (d *InboundDispatcher) Dispatch(ctx context.Context, env Envelope) {
+	// Multi-hop forwarding: if the envelope is not for us, forward it.
+	if d.cluster != nil && env.TargetNode != "" && env.TargetNode != NodeID(d.bridge.NodeID()) {
+		d.cluster.SendRemote(ctx, env.TargetNode, env)
+		return
+	}
+
 	// Decode the payload.
 	var payload any
 	if err := d.codec.Decode(env.Payload, &payload); err != nil {
