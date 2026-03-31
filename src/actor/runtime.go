@@ -82,6 +82,15 @@ type Runtime struct {
 	// Cluster pubsub integration (nil when using local-only pubsub).
 	pubsubBroadcast PubSubBroadcastFunc
 
+	// Timer management.
+	timers *timerManager
+
+	// Dead letter handling.
+	deadLetters *deadLetterSink
+
+	// Actor monitors.
+	monitors *monitorManager
+
 	// Cluster membership query (nil when single-node).
 	clusterMembers func() []ClusterMemberInfo
 }
@@ -141,6 +150,16 @@ func WithSupervisor(p SupervisorPolicy) RuntimeOption {
 
 func WithMetrics(h metrics.Hooks) RuntimeOption {
 	return func(r *Runtime) { r.metrics = h }
+}
+
+// WithDeadLetterHandler sets a callback for undeliverable messages.
+func WithDeadLetterHandler(h DeadLetterHandler) RuntimeOption {
+	return func(r *Runtime) { r.deadLetters.setHandler(h) }
+}
+
+// DeadLetterCount returns the total number of dead letters since startup.
+func (r *Runtime) DeadLetterCount() uint64 {
+	return r.deadLetters.Count()
 }
 
 // WithNodeID sets the local node identity. When set, PIDs issued without
@@ -222,6 +241,9 @@ func NewRuntime(opts ...RuntimeOption) *Runtime {
 		routers:   make(map[string]*routerRuntimeState),
 		randSrc:   rand.New(rand.NewSource(time.Now().UnixNano())),
 		brokers:   make(map[string]*pubsubBrokerService),
+		timers:      newTimerManager(),
+		deadLetters: newDeadLetterSink(),
+		monitors:    newMonitorManager(),
 	}
 	for _, opt := range opts {
 		opt(r)
@@ -1323,6 +1345,8 @@ func (r *Runtime) cleanupRegistryForActor(actorID string, result RegistryOperati
 		r.metrics.ObserveRegistryOperation(string(result))
 		r.emitRegistry(EventRegistryUnregister, e.name, e.actorID, e.pid, result, "")
 	}
+	// Notify monitors — the actor is terminally stopped.
+	r.notifyMonitors(actorID, "stopped")
 }
 
 func (r *Runtime) Status(actorID string) ActorStatus {
@@ -1435,20 +1459,24 @@ func (r *Runtime) sendPIDWithSender(ctx context.Context, senderActorID string, p
 		if _, exists := r.registry.get(pid.ActorID); !exists {
 			r.emitPID(EventPIDRejected, pid, msgID, PIDRejectedNotFound, string(PIDRejectedNotFound))
 			r.emitGuardrail(guardrailActor, mode, GuardrailGatewayRouteFailure, string(PIDRejectedNotFound))
+			r.deadLetters.emitPID(pid, payload, "actor_not_found")
 			return PIDSendAck{Outcome: PIDRejectedNotFound, MessageID: msgID}
 		}
 		r.emitPID(EventPIDUnresolved, pid, msgID, PIDUnresolved, string(PIDUnresolved))
 		r.emitGuardrail(guardrailActor, mode, GuardrailGatewayRouteFailure, string(PIDUnresolved))
+		r.deadLetters.emitPID(pid, payload, "pid_unresolved")
 		return PIDSendAck{Outcome: PIDUnresolved, MessageID: msgID}
 	}
 	if entry.RouteState == PIDRouteStopped {
 		r.emitPID(EventPIDRejected, pid, msgID, PIDRejectedStopped, string(PIDRejectedStopped))
 		r.emitGuardrail(guardrailActor, mode, GuardrailGatewayRouteFailure, string(PIDRejectedStopped))
+		r.deadLetters.emitPID(pid, payload, "actor_stopped")
 		return PIDSendAck{Outcome: PIDRejectedStopped, MessageID: msgID}
 	}
 	if pid.Generation != entry.CurrentGeneration {
 		r.emitPID(EventPIDRejected, pid, msgID, PIDRejectedStaleGeneration, string(PIDRejectedStaleGeneration))
 		r.emitGuardrail(guardrailActor, mode, GuardrailGatewayRouteFailure, string(PIDRejectedStaleGeneration))
+		r.deadLetters.emitPID(pid, payload, "stale_generation")
 		return PIDSendAck{Outcome: PIDRejectedStaleGeneration, MessageID: msgID}
 	}
 	if mode == GatewayRouteGatewayMediated && !r.resolver.GatewayAvailable() {
