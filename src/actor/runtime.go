@@ -73,6 +73,11 @@ type Runtime struct {
 	nodeID     string              // local node identity; "" when no cluster
 	remoteSend RemoteSenderFunc    // sends messages to remote nodes
 	remoteAsk  RemoteAskSenderFunc // sends ask messages to remote nodes
+
+	// Cluster registry integration (nil when using local-only registry).
+	clusterRegister   func(name string, pid PID) error
+	clusterLookup     func(name string) (PID, bool)
+	clusterUnregister func(name string) (PID, bool)
 }
 
 type pendingAsk struct {
@@ -129,6 +134,21 @@ func WithRemoteAskSend(fn RemoteAskSenderFunc) RuntimeOption {
 
 // NodeID returns the local node identity, or "" if not clustered.
 func (r *Runtime) NodeID() string { return r.nodeID }
+
+// WithClusterRegistry injects cluster-wide registry functions.
+// When set, RegisterName/LookupName/UnregisterName delegate to
+// these functions in addition to the local registry.
+func WithClusterRegistry(
+	register func(name string, pid PID) error,
+	lookup func(name string) (PID, bool),
+	unregister func(name string) (PID, bool),
+) RuntimeOption {
+	return func(r *Runtime) {
+		r.clusterRegister = register
+		r.clusterLookup = lookup
+		r.clusterUnregister = unregister
+	}
+}
 
 func NewRuntime(opts ...RuntimeOption) *Runtime {
 	r := &Runtime{
@@ -1409,6 +1429,12 @@ func (r *Runtime) RegisterName(actorID, name, namespace string) (RegistryRegiste
 	}
 	r.metrics.ObserveRegistryOperation(string(RegistryRegisterSuccess))
 	r.emitRegistry(EventRegistryRegister, entry.name, entry.actorID, entry.pid, RegistryRegisterSuccess, "")
+
+	// Propagate to cluster registry if available.
+	if r.clusterRegister != nil {
+		r.clusterRegister(name, entry.pid)
+	}
+
 	return RegistryRegisterAck{Result: RegistryRegisterSuccess, Name: entry.name, PID: entry.pid}, nil
 }
 
@@ -1417,6 +1443,14 @@ func (r *Runtime) LookupName(name string) RegistryLookupAck {
 	entry, ok := r.names.lookup(name)
 	r.metrics.ObserveRegistryLookupLatency(name, r.now().Sub(start))
 	if !ok {
+		// Fall back to cluster registry if available.
+		if r.clusterLookup != nil {
+			if pid, found := r.clusterLookup(name); found {
+				r.metrics.ObserveRegistryOperation(string(RegistryLookupHit))
+				r.emitRegistry(EventRegistryLookup, name, pid.ActorID, pid, RegistryLookupHit, "cluster")
+				return RegistryLookupAck{Result: RegistryLookupHit, Name: name, PID: pid}
+			}
+		}
 		r.metrics.ObserveRegistryOperation(string(RegistryLookupNotFound))
 		r.emitRegistry(EventRegistryLookup, name, "", PID{}, RegistryLookupNotFound, ErrRegistryNameNotFound.Error())
 		return RegistryLookupAck{Result: RegistryLookupNotFound, Name: name}
@@ -1435,6 +1469,12 @@ func (r *Runtime) UnregisterName(name string) RegistryLookupAck {
 	}
 	r.metrics.ObserveRegistryOperation(string(RegistryUnregisterSuccess))
 	r.emitRegistry(EventRegistryUnregister, entry.name, entry.actorID, entry.pid, RegistryUnregisterSuccess, "")
+
+	// Propagate to cluster registry.
+	if r.clusterUnregister != nil {
+		r.clusterUnregister(name)
+	}
+
 	return RegistryLookupAck{Result: RegistryUnregisterSuccess, Name: entry.name, PID: entry.pid}
 }
 
