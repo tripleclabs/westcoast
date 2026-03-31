@@ -56,20 +56,13 @@ func NewClusterSupervisor(cfg ClusterSupervisorConfig) *ClusterSupervisor {
 func (cs *ClusterSupervisor) Start(ctx context.Context) {
 	ctx, cs.cancel = context.WithCancel(ctx)
 
-	// Wire into the cluster's membership event stream.
-	origHandler := cs.cluster.cfg.OnMemberEvent
-	cs.cluster.cfg.OnMemberEvent = func(ev MemberEvent) {
-		// Forward to original handler if any.
-		if origHandler != nil {
-			origHandler(ev)
-		}
-		// Update election state.
+	// Wire into the cluster's membership event stream via the thread-safe setter.
+	cs.cluster.SetOnMemberEvent(func(ev MemberEvent) {
 		cs.election.OnMembershipChange(ev)
-		// Handle the event.
 		if ev.Type == MemberFailed {
 			cs.handleNodeFailure(ev.Member)
 		}
-	}
+	})
 }
 
 // Stop terminates the supervisor.
@@ -114,22 +107,15 @@ func (cs *ClusterSupervisor) handleNodeFailure(failed NodeMeta) {
 	// Ask the policy for placement decisions.
 	decisions := cs.policy.OnNodeFailed(failed.ID, actorNames, live)
 
-	// Record decisions with the current term for fencing.
-	cs.mu.Lock()
-	for i := range decisions {
-		decisions[i] = PlacementDecision{
-			ActorName:  decisions[i].ActorName,
-			TargetNode: decisions[i].TargetNode,
-			Action:     decisions[i].Action,
-		}
-	}
-	cs.decisions = append(cs.decisions, decisions...)
-	cs.mu.Unlock()
-
-	// Verify we're still the leader (fencing check).
+	// Verify we're still the leader before committing (fencing check).
 	if cs.election.Term(cs.scope) != term {
 		return // leadership changed during processing — abort
 	}
+
+	// Record committed decisions.
+	cs.mu.Lock()
+	cs.decisions = append(cs.decisions, decisions...)
+	cs.mu.Unlock()
 
 	// Clean up the failed node's names from the registry.
 	cs.registry.UnregisterByNode(failed.ID)

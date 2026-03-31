@@ -107,16 +107,14 @@ func TestPubSub_CrossNodeDirectBroadcast(t *testing.T) {
 	})
 
 	// Wire inbound envelope routing to the pubsub adapters.
-	c1.cfg.OnEnvelope = func(from NodeID, env Envelope) {
-		if env.TypeName == pubsubEnvelopeType {
-			adapter1.HandleInbound(env)
-		}
-	}
-	c2.cfg.OnEnvelope = func(from NodeID, env Envelope) {
-		if env.TypeName == pubsubEnvelopeType {
-			adapter2.HandleInbound(env)
-		}
-	}
+	// Wire via InboundDispatcher + RegisterPubSubHandler.
+	d1 := NewInboundDispatcher(rt1, codec)
+	d2 := NewInboundDispatcher(rt2, codec)
+	RegisterPubSubHandler(d1, adapter1)
+	RegisterPubSubHandler(d2, adapter2)
+
+	c1.cfg.OnEnvelope = func(from NodeID, env Envelope) { d1.Dispatch(ctx, from, env) }
+	c2.cfg.OnEnvelope = func(from NodeID, env Envelope) { d2.Dispatch(ctx, from, env) }
 
 	// Start clusters and connect.
 	c1.Start(ctx)
@@ -226,16 +224,13 @@ func TestPubSub_NoRebroadcastLoop(t *testing.T) {
 		rt2.BrokerPublishRemote(ctx, "", topic, payload, string(from))
 	})
 
-	c1.cfg.OnEnvelope = func(from NodeID, env Envelope) {
-		if env.TypeName == pubsubEnvelopeType {
-			adapter1.HandleInbound(env)
-		}
-	}
-	c2.cfg.OnEnvelope = func(from NodeID, env Envelope) {
-		if env.TypeName == pubsubEnvelopeType {
-			adapter2.HandleInbound(env)
-		}
-	}
+	d1 := NewInboundDispatcher(rt1, codec)
+	d2 := NewInboundDispatcher(rt2, codec)
+	RegisterPubSubHandler(d1, adapter1)
+	RegisterPubSubHandler(d2, adapter2)
+
+	c1.cfg.OnEnvelope = func(from NodeID, env Envelope) { d1.Dispatch(ctx, from, env) }
+	c2.cfg.OnEnvelope = func(from NodeID, env Envelope) { d2.Dispatch(ctx, from, env) }
 
 	c1.Start(ctx)
 	c2.Start(ctx)

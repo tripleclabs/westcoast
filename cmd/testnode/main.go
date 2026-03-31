@@ -109,7 +109,7 @@ func main() {
 	dispatcher := cluster.NewInboundDispatcher(rt, codec)
 	dispatcher.SetCluster(c)
 	c.SetOnEnvelope(func(from cluster.NodeID, env cluster.Envelope) {
-		dispatcher.Dispatch(ctx, env)
+		dispatcher.Dispatch(ctx, from, env)
 	})
 
 	// Track membership for the remote resolver.

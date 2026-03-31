@@ -124,10 +124,10 @@ func setupTwoNodeCluster(t *testing.T) (rt1, rt2 *actor.Runtime, c1, c2 *Cluster
 	dispatcher2 := NewInboundDispatcher(rt2, codec)
 
 	c1.cfg.OnEnvelope = func(from NodeID, env Envelope) {
-		dispatcher1.Dispatch(ctx, env)
+		dispatcher1.Dispatch(ctx, from, env)
 	}
 	c2.cfg.OnEnvelope = func(from NodeID, env Envelope) {
-		dispatcher2.Dispatch(ctx, env)
+		dispatcher2.Dispatch(ctx, from, env)
 	}
 
 	// Start clusters.
@@ -221,7 +221,7 @@ func TestRemote_CrossNodeSend(t *testing.T) {
 	// Set up inbound dispatcher for node-2.
 	dispatcher2 := NewInboundDispatcher(rt2, codec)
 	c2.cfg.OnEnvelope = func(from NodeID, env Envelope) {
-		dispatcher2.Dispatch(ctx, env)
+		dispatcher2.Dispatch(ctx, from, env)
 	}
 
 	// Start clusters and connect.
@@ -316,10 +316,10 @@ func TestRemote_CrossNodeAskReply(t *testing.T) {
 	dispatcher1 := NewInboundDispatcher(rt1, codec)
 	dispatcher2 := NewInboundDispatcher(rt2, codec)
 	c1.cfg.OnEnvelope = func(from NodeID, env Envelope) {
-		dispatcher1.Dispatch(ctx, env)
+		dispatcher1.Dispatch(ctx, from, env)
 	}
 	c2.cfg.OnEnvelope = func(from NodeID, env Envelope) {
-		dispatcher2.Dispatch(ctx, env)
+		dispatcher2.Dispatch(ctx, from, env)
 	}
 
 	// Start and connect.

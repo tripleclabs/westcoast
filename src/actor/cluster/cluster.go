@@ -35,9 +35,10 @@ type ClusterConfig struct {
 type Cluster struct {
 	cfg ClusterConfig
 
-	mu    sync.RWMutex
-	conns map[NodeID]Connection // active connections by node
-	peers map[NodeID]NodeMeta   // known live peers
+	mu      sync.RWMutex
+	conns   map[NodeID]Connection // active connections by node
+	peers   map[NodeID]NodeMeta   // known live peers
+	dialing map[NodeID]bool       // dial attempts in progress
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -69,8 +70,9 @@ func NewCluster(cfg ClusterConfig) (*Cluster, error) {
 	}
 	return &Cluster{
 		cfg:   cfg,
-		conns: make(map[NodeID]Connection),
-		peers: make(map[NodeID]NodeMeta),
+		conns:   make(map[NodeID]Connection),
+		peers:   make(map[NodeID]NodeMeta),
+		dialing: make(map[NodeID]bool),
 	}, nil
 }
 
@@ -222,14 +224,16 @@ func (c *Cluster) memberListLocked() []NodeMeta {
 }
 
 // SetOnEnvelope sets the callback for inbound envelopes.
-// Must be called before Start.
 func (c *Cluster) SetOnEnvelope(fn func(from NodeID, env Envelope)) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.cfg.OnEnvelope = fn
 }
 
 // SetOnMemberEvent sets the callback for membership changes.
-// Must be called before Start, or dynamically by the ClusterSupervisor.
 func (c *Cluster) SetOnMemberEvent(fn func(event MemberEvent)) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.cfg.OnMemberEvent = fn
 }
 
@@ -283,8 +287,6 @@ func (c *Cluster) membershipLoop() {
 
 func (c *Cluster) handleMemberEvent(ev MemberEvent) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	switch ev.Type {
 	case MemberJoin, MemberUpdated:
 		c.peers[ev.Member.ID] = ev.Member
@@ -297,12 +299,13 @@ func (c *Cluster) handleMemberEvent(ev MemberEvent) {
 		}
 	}
 
-	// Recompute desired connections based on topology.
 	c.reconcileConnectionsLocked()
+	fn := c.cfg.OnMemberEvent
+	c.mu.Unlock()
 
-	// Notify the Runtime layer (outside the lock to avoid deadlocks).
-	if c.cfg.OnMemberEvent != nil {
-		go c.cfg.OnMemberEvent(ev)
+	// Invoke callback outside the lock to avoid deadlocks.
+	if fn != nil {
+		fn(ev)
 	}
 }
 
@@ -319,8 +322,9 @@ func (c *Cluster) reconcileConnectionsLocked() {
 
 	// Dial nodes we should be connected to but aren't.
 	for _, id := range desired {
-		if _, connected := c.conns[id]; !connected {
+		if _, connected := c.conns[id]; !connected && !c.dialing[id] {
 			if meta, known := c.peers[id]; known {
+				c.dialing[id] = true
 				go c.dialPeer(meta)
 			}
 		}
@@ -340,12 +344,15 @@ func (c *Cluster) dialPeer(meta NodeMeta) {
 	defer cancel()
 
 	conn, err := c.cfg.Transport.Dial(ctx, meta.Addr, c.cfg.Auth)
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.dialing, meta.ID)
+
 	if err != nil {
 		return
 	}
 
-	c.mu.Lock()
-	defer c.mu.Unlock()
 	if _, ok := c.conns[meta.ID]; ok {
 		conn.Close()
 		return

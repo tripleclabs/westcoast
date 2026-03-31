@@ -158,6 +158,22 @@ func (g *GossipProtocol) doRound(ctx context.Context) {
 	}
 }
 
+// RegisterGossipHandler registers a gossip protocol with an InboundDispatcher
+// so that __gossip envelopes are routed to the protocol automatically.
+func RegisterGossipHandler(d *InboundDispatcher, codec Codec, g *GossipProtocol) {
+	d.RegisterHandler("__gossip", func(from NodeID, env Envelope) {
+		var decoded any
+		if err := codec.Decode(env.Payload, &decoded); err != nil {
+			return
+		}
+		ge, ok := decoded.(GossipEnvelope)
+		if !ok {
+			return
+		}
+		g.HandleInbound(from, ge)
+	})
+}
+
 func selectRandomPeers(members []NodeMeta, n int) []NodeMeta {
 	if len(members) <= n {
 		return members

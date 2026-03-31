@@ -2,6 +2,8 @@ package cluster
 
 import (
 	"context"
+	"fmt"
+	"sync"
 
 	"github.com/tripleclabs/westcoast/src/actor"
 )
@@ -20,19 +22,28 @@ type RuntimeBridge interface {
 	NodeID() string
 }
 
+// SystemEnvelopeHandler handles a system-level envelope (gossip, pubsub
+// broadcast, etc.) that is not destined for an actor.
+type SystemEnvelopeHandler func(from NodeID, env Envelope)
+
 // InboundDispatcher handles envelopes arriving from remote nodes.
-// It decodes the payload and routes to the local Runtime, or forwards
-// the envelope to the next hop if the target is a different node.
+// It routes system envelopes (gossip, pubsub) to registered handlers,
+// actor messages to the local Runtime, and forwards envelopes not
+// destined for this node to the next hop.
 type InboundDispatcher struct {
 	bridge  RuntimeBridge
 	codec   Codec
 	cluster *Cluster // non-nil enables multi-hop forwarding
+
+	mu       sync.RWMutex
+	handlers map[string]SystemEnvelopeHandler // TypeName → handler
 }
 
 func NewInboundDispatcher(bridge RuntimeBridge, codec Codec) *InboundDispatcher {
 	return &InboundDispatcher{
-		bridge: bridge,
-		codec:  codec,
+		bridge:   bridge,
+		codec:    codec,
+		handlers: make(map[string]SystemEnvelopeHandler),
 	}
 }
 
@@ -41,24 +52,41 @@ func (d *InboundDispatcher) SetCluster(c *Cluster) {
 	d.cluster = c
 }
 
+// RegisterHandler registers a handler for a system envelope type.
+// When an envelope arrives with the given TypeName, the handler is called
+// instead of routing to an actor.
+func (d *InboundDispatcher) RegisterHandler(typeName string, handler SystemEnvelopeHandler) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.handlers[typeName] = handler
+}
+
 // Dispatch processes an incoming envelope from a remote node.
-func (d *InboundDispatcher) Dispatch(ctx context.Context, env Envelope) {
+// Returns an error if the payload cannot be decoded. Callers should
+// log or count these errors — a non-nil error means the message was lost.
+func (d *InboundDispatcher) Dispatch(ctx context.Context, from NodeID, env Envelope) error {
 	// Multi-hop forwarding: if the envelope is not for us, forward it.
 	if d.cluster != nil && env.TargetNode != "" && env.TargetNode != NodeID(d.bridge.NodeID()) {
-		d.cluster.SendRemote(ctx, env.TargetNode, env)
-		return
+		return d.cluster.SendRemote(ctx, env.TargetNode, env)
 	}
 
-	// Decode the payload.
+	// System envelope handlers (gossip, pubsub broadcast, etc.).
+	d.mu.RLock()
+	handler, isSystem := d.handlers[env.TypeName]
+	d.mu.RUnlock()
+	if isSystem {
+		handler(from, env)
+		return nil
+	}
+
+	// Decode the payload for actor delivery.
 	var payload any
 	if err := d.codec.Decode(env.Payload, &payload); err != nil {
-		return // drop malformed payloads
+		return fmt.Errorf("dispatch: decode payload (type=%s, from=%s): %w", env.TypeName, from, err)
 	}
 
-	// If this is an ask reply being returned to us, route via PID.
+	// Ask request: deliver with ask context so the actor can reply.
 	if env.IsAsk && env.AskReplyTo != nil {
-		// This is a request (not a reply). Deliver to the target actor
-		// with the ask context so the actor can reply.
 		askCtx := &actor.AskRequestContext{
 			RequestID: env.AskRequestID,
 			ReplyTo: actor.PID{
@@ -68,10 +96,10 @@ func (d *InboundDispatcher) Dispatch(ctx context.Context, env Envelope) {
 			},
 		}
 		d.bridge.DeliverLocal(ctx, env.TargetActorID, payload, askCtx)
-		return
+		return nil
 	}
 
-	// Check if this is an ask reply (payload going to an ask-reply PID).
+	// Ask reply returning to us.
 	if isAskReplyLocal(env.Namespace, d.bridge.NodeID()) {
 		pid := actor.PID{
 			Namespace:  env.Namespace,
@@ -79,9 +107,10 @@ func (d *InboundDispatcher) Dispatch(ctx context.Context, env Envelope) {
 			Generation: env.Generation,
 		}
 		d.bridge.DeliverPID(ctx, pid, payload)
-		return
+		return nil
 	}
 
 	// Standard fire-and-forget delivery.
 	d.bridge.DeliverLocal(ctx, env.TargetActorID, payload, nil)
+	return nil
 }

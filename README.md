@@ -129,7 +129,7 @@ rt1 := actor.NewRuntime(
 // Wire inbound delivery
 dispatcher := cluster.NewInboundDispatcher(rt1, codec)
 c1.cfg.OnEnvelope = func(from cluster.NodeID, env cluster.Envelope) {
-    dispatcher.Dispatch(context.Background(), env)
+    dispatcher.Dispatch(context.Background(), from, env)
 }
 
 c1.Start(context.Background())
@@ -233,6 +233,219 @@ Every distributed concern is behind an interface. Defaults work out of the box; 
 | `LeaderElection` | `RingElection` | Scoped leader election |
 | `ClusterSupervisionPolicy` | `SimpleRestartPolicy` | Actor placement on node failure |
 | `SupervisorPolicy` | `DefaultSupervisor` | Local actor restart decisions |
+
+## Interface Reference
+
+All types below live in `src/actor/cluster/` unless noted as `actor.`.
+
+### Core Types
+
+```go
+type NodeID string
+
+type NodeMeta struct {
+    ID       NodeID
+    Addr     string            // host:port for transport connections
+    Tags     map[string]string // arbitrary metadata (region, zone, capabilities)
+    JoinedAt time.Time
+}
+
+type MemberEventType int // MemberJoin, MemberLeave, MemberFailed, MemberUpdated
+
+type MemberEvent struct {
+    Type   MemberEventType
+    Member NodeMeta
+}
+```
+
+### Envelope (wire format)
+
+```go
+type Envelope struct {
+    SenderNode    NodeID
+    SenderActorID string
+    TargetNode    NodeID
+    TargetActorID string
+    Namespace     string // PID namespace
+    Generation    uint64 // PID generation
+    TypeName      string
+    SchemaVersion string
+    MessageID     uint64
+    Payload       []byte // codec-encoded
+    IsAsk         bool
+    AskRequestID  string
+    AskReplyTo    *RemotePID // nil for fire-and-forget
+    SentAtUnixNano int64
+}
+
+type RemotePID struct {
+    Node       NodeID
+    Namespace  string
+    ActorID    string
+    Generation uint64
+}
+```
+
+### Transport
+
+```go
+type Transport interface {
+    Listen(addr string, handler InboundHandler) error
+    Dial(ctx context.Context, addr string, auth ClusterAuth) (Connection, error)
+    Close() error
+}
+
+type Connection interface {
+    Send(ctx context.Context, env Envelope) error
+    Close() error
+    RemoteAddr() string
+    RemoteNodeID() NodeID
+}
+
+type InboundHandler interface {
+    OnEnvelope(from NodeID, env Envelope)
+    OnConnectionEstablished(remote NodeID, conn Connection)
+    OnConnectionLost(remote NodeID, err error)
+}
+```
+
+### ClusterProvider
+
+```go
+type ClusterProvider interface {
+    Start(self NodeMeta) error
+    Stop() error
+    Members() []NodeMeta
+    Events() <-chan MemberEvent
+}
+```
+
+### ClusterAuth
+
+```go
+type ClusterAuth interface {
+    Credentials() ([]byte, error)
+    Verify(peerCredentials []byte) error
+}
+```
+
+### Codec
+
+```go
+type Codec interface {
+    Encode(v any) ([]byte, error)
+    Decode(data []byte, v any) error
+    Register(v any) // make a concrete type known (gob.Register)
+    Name() string   // "gob", "proto", etc.
+}
+```
+
+### Topology
+
+```go
+type Topology interface {
+    ShouldConnect(self NodeID, members []NodeMeta) []NodeID
+    Route(self, target NodeID, members []NodeMeta) (nextHop NodeID, ok bool)
+    Responsible(key string, members []NodeMeta, replication int) []NodeID
+}
+```
+
+### LeaderElection
+
+```go
+type LeaderElection interface {
+    Leader(scope string) (NodeID, bool)
+    IsLeader(scope string) bool
+    Term(scope string) uint64
+    Watch(scope string) <-chan LeaderEvent
+    OnMembershipChange(event MemberEvent)
+}
+
+type LeaderEvent struct {
+    Scope      string
+    Leader     NodeID
+    PrevLeader NodeID
+    Term       uint64
+}
+```
+
+### ClusterConfig
+
+```go
+type ClusterConfig struct {
+    Self      NodeMeta
+    Provider  ClusterProvider
+    Transport Transport
+    Auth      ClusterAuth       // defaults to NoopAuth
+    Codec     Codec             // defaults to GobCodec
+    Topology  Topology          // defaults to FullMeshTopology
+
+    // Callbacks — set by the integration layer before Start.
+    OnEnvelope    func(from NodeID, env Envelope)
+    OnMemberEvent func(event MemberEvent)
+}
+```
+
+### Runtime Cluster Wiring (package `actor`)
+
+Function types injected via `RuntimeOption` to connect the Runtime to the cluster layer without import cycles:
+
+```go
+// Injected via WithRemoteSend — called when SendPID targets a remote node.
+type RemoteSenderFunc func(
+    ctx context.Context, senderActorID string, pid PID,
+    payload any, msgID uint64,
+) (PIDSendAck, error)
+
+// Injected via WithRemoteAskSend — called for cross-node Ask requests.
+type RemoteAskSenderFunc func(
+    ctx context.Context, senderActorID string, pid PID,
+    payload any, msgID uint64,
+    askRequestID string, replyTo PID,
+) (PIDSendAck, error)
+
+// Injected via WithPubSubBroadcast — called after local publish to fan out.
+type PubSubBroadcastFunc func(ctx context.Context, topic string, payload any) error
+```
+
+### RegistryStrategy
+
+```go
+type RegistryStrategy interface {
+    Register(name string, pid actor.PID) error
+    Lookup(name string) (actor.PID, bool)
+    Unregister(name string) (actor.PID, bool)
+    UnregisterByNode(node NodeID) []string
+    OnMembershipChange(event MemberEvent)
+}
+```
+
+### PubSubAdapter
+
+```go
+type PubSubAdapter interface {
+    Broadcast(ctx context.Context, topic string, payload any, publisherNode NodeID) error
+    SetHandler(handler RemotePublishHandler)
+    Start(ctx context.Context) error
+    Stop() error
+}
+
+type RemotePublishHandler func(topic string, payload any, publisherNode NodeID)
+```
+
+### ClusterSupervisionPolicy
+
+```go
+type ClusterSupervisionPolicy interface {
+    OnNodeFailed(failedNode NodeID, actorNames []string, liveMembers []NodeMeta) []PlacementDecision
+}
+
+type PlacementDecision struct {
+    ActorName  string
+    TargetNode NodeID
+    Action     PlacementAction // PlacementRestart or PlacementAbandon
+}
+```
 
 ## Feature Specs
 

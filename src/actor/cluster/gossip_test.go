@@ -172,29 +172,18 @@ func TestRegistryGossip_ConvergesViaGossip(t *testing.T) {
 	rg1 := NewRegistryGossip(reg1, c1, codec, gossipCfg)
 	rg2 := NewRegistryGossip(reg2, c2, codec, gossipCfg)
 
-	// Wire inbound gossip routing.
-	decodeGossip := func(env Envelope) (GossipEnvelope, bool) {
-		var decoded any
-		if err := codec.Decode(env.Payload, &decoded); err != nil {
-			return GossipEnvelope{}, false
-		}
-		ge, ok := decoded.(GossipEnvelope)
-		return ge, ok
-	}
+	// Wire inbound routing via InboundDispatcher with registered gossip handler.
+	d1 := NewInboundDispatcher(nil, codec)
+	d2 := NewInboundDispatcher(nil, codec)
+
+	RegisterGossipHandler(d1, codec, rg1.GossipProtocol())
+	RegisterGossipHandler(d2, codec, rg2.GossipProtocol())
 
 	c1.cfg.OnEnvelope = func(from NodeID, env Envelope) {
-		if env.TypeName == "__gossip" {
-			if ge, ok := decodeGossip(env); ok {
-				rg1.GossipProtocol().HandleInbound(from, ge)
-			}
-		}
+		d1.Dispatch(ctx, from, env)
 	}
 	c2.cfg.OnEnvelope = func(from NodeID, env Envelope) {
-		if env.TypeName == "__gossip" {
-			if ge, ok := decodeGossip(env); ok {
-				rg2.GossipProtocol().HandleInbound(from, ge)
-			}
-		}
+		d2.Dispatch(ctx, from, env)
 	}
 
 	// Start everything.

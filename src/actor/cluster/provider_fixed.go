@@ -34,6 +34,8 @@ type FixedProvider struct {
 	// Return nil for alive, error for unreachable. Injected for testing.
 	// If nil, peers are assumed alive on first contact via AddMember.
 	Probe func(ctx context.Context, addr string) error
+
+	droppedEvents uint64
 }
 
 type fixedPeerState struct {
@@ -52,7 +54,7 @@ func NewFixedProvider(cfg FixedProviderConfig) *FixedProvider {
 	}
 	return &FixedProvider{
 		cfg:     cfg,
-		eventCh: make(chan MemberEvent, 64),
+		eventCh: make(chan MemberEvent, 1024),
 		members: make(map[NodeID]*fixedPeerState),
 	}
 }
@@ -191,7 +193,18 @@ func (p *FixedProvider) emit(ev MemberEvent) {
 	select {
 	case p.eventCh <- ev:
 	default:
+		p.droppedEvents++
 	}
+}
+
+// DroppedEvents returns the number of membership events dropped due to
+// a full event channel. A non-zero value indicates the consumer is not
+// draining events fast enough — this is a correctness problem since
+// dropped MemberFailed events mean actors on dead nodes are never cleaned up.
+func (p *FixedProvider) DroppedEvents() uint64 {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.droppedEvents
 }
 
 // AddMember manually registers a node. Useful for testing.

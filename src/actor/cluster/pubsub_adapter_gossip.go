@@ -3,6 +3,7 @@ package cluster
 import (
 	"context"
 	"encoding/gob"
+	"fmt"
 	"sync"
 )
 
@@ -19,11 +20,12 @@ type pubsubGossipPayload struct {
 	PublisherNode NodeID
 }
 
+const maxPendingPubSub = 4096
+
 // GossipPubSubAdapter broadcasts publications via the gossip protocol.
-// Each gossip round, any buffered publications are sent to `fanout`
-// random peers. Peers re-gossip to their own peers, achieving
-// epidemic spread. Suitable for larger clusters where direct fan-out
-// is too expensive.
+// Publications are batched and sent on gossip ticks to `fanout` random
+// peers. Suitable for larger clusters where direct fan-out is too expensive.
+// For latency-sensitive use cases, prefer DirectPubSubAdapter.
 type GossipPubSubAdapter struct {
 	cluster *Cluster
 	codec   Codec
@@ -54,6 +56,10 @@ func (a *GossipPubSubAdapter) Broadcast(ctx context.Context, topic string, paylo
 		return err
 	}
 	a.mu.Lock()
+	if len(a.pending) >= maxPendingPubSub {
+		a.mu.Unlock()
+		return fmt.Errorf("pubsub gossip buffer full (%d)", maxPendingPubSub)
+	}
 	a.pending = append(a.pending, pubsubGossipPayload{
 		Topic:         topic,
 		Payload:       encoded,

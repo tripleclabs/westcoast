@@ -99,3 +99,11 @@ func (a *DirectPubSubAdapter) HandleInbound(env Envelope) {
 
 func (a *DirectPubSubAdapter) Start(ctx context.Context) error { return nil }
 func (a *DirectPubSubAdapter) Stop() error                     { return nil }
+
+// RegisterPubSubHandler registers a direct pubsub adapter with an
+// InboundDispatcher so that pubsub broadcast envelopes are routed automatically.
+func RegisterPubSubHandler(d *InboundDispatcher, adapter *DirectPubSubAdapter) {
+	d.RegisterHandler(pubsubEnvelopeType, func(from NodeID, env Envelope) {
+		adapter.HandleInbound(env)
+	})
+}
