@@ -1202,6 +1202,85 @@ func (r *Runtime) routeAskReply(pid PID, payload any, msgID uint64) (PIDSendAck,
 	}
 }
 
+// AskPID sends a request to a PID (local or remote) and waits for a reply
+// with timeout. This is the PID-addressed equivalent of Ask.
+func (r *Runtime) AskPID(ctx context.Context, pid PID, payload any, timeout time.Duration) (AskResult, error) {
+	if timeout <= 0 {
+		return AskResult{}, ErrAskInvalidTimeout
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	wait := r.newAskRequest(pid.ActorID)
+	askCtx := &AskRequestContext{
+		RequestID: wait.requestID,
+		ReplyTo:   wait.replyTo,
+	}
+
+	// For remote PIDs, use the remote ask sender which embeds the ask context
+	// in the envelope. For local PIDs, use the standard local path.
+	var sent bool
+	if r.remoteAsk != nil && pid.IsRemote(r.nodeID) {
+		msgID := r.msgSeq.Add(1)
+		ack, err := r.remoteAsk(ctx, "", pid, payload, msgID, askCtx.RequestID, askCtx.ReplyTo)
+		if err != nil || ack.Outcome != PIDDelivered {
+			r.completeAskRequest(wait)
+			r.emitAsk(pid.ActorID, wait.requestID, wait.replyTo, AskOutcomeReplyTargetInvalid, "remote_send_failed")
+			return AskResult{}, ErrAskReplyTargetInvalid
+		}
+		sent = true
+	}
+
+	if !sent {
+		// Local PID — deliver via the standard local send path.
+		ack := r.sendWithAskContext(ctx, pid.ActorID, payload, askCtx)
+		if ack.Result != SubmitAccepted {
+			r.completeAskRequest(wait)
+			r.emitAsk(pid.ActorID, wait.requestID, wait.replyTo, AskOutcomeReplyTargetInvalid, string(ack.Result))
+			return AskResult{}, ErrAskReplyTargetInvalid
+		}
+	}
+
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
+	select {
+	case rep := <-wait.waitCh:
+		r.completeAskRequest(wait)
+		r.emitAsk(pid.ActorID, wait.requestID, wait.replyTo, AskOutcomeSuccess, "")
+		return AskResult{RequestID: rep.RequestID, Payload: rep.Payload}, nil
+	case <-timer.C:
+		r.completeAskRequest(wait)
+		r.emitAsk(pid.ActorID, wait.requestID, wait.replyTo, AskOutcomeTimeout, ErrAskTimeout.Error())
+		return AskResult{}, ErrAskTimeout
+	case <-ctx.Done():
+		r.completeAskRequest(wait)
+		r.emitAsk(pid.ActorID, wait.requestID, wait.replyTo, AskOutcomeCanceled, ErrAskCanceled.Error())
+		return AskResult{}, ErrAskCanceled
+	}
+}
+
+// SendName looks up a registered name and sends a message to the resolved PID.
+// Works for both local and cluster-registered names (singletons, services, etc).
+func (r *Runtime) SendName(ctx context.Context, name string, payload any) PIDSendAck {
+	ack := r.LookupName(name)
+	if ack.Result != RegistryLookupHit {
+		return PIDSendAck{Outcome: PIDRejectedNotFound}
+	}
+	return r.SendPID(ctx, ack.PID, payload)
+}
+
+// AskName looks up a registered name and performs a request-response to the
+// resolved PID. Works for both local and cluster-registered names.
+func (r *Runtime) AskName(ctx context.Context, name string, payload any, timeout time.Duration) (AskResult, error) {
+	ack := r.LookupName(name)
+	if ack.Result != RegistryLookupHit {
+		return AskResult{}, fmt.Errorf("%w: %s", ErrRegistryNameNotFound, name)
+	}
+	return r.AskPID(ctx, ack.PID, payload, timeout)
+}
+
 func (r *Runtime) RegisterTypeRoute(actorID, typeName, schemaVersion, handlerKey string) error {
 	if _, ok := r.registry.get(actorID); !ok {
 		return ErrActorNotFound

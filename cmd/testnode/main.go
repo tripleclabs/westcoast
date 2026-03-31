@@ -272,6 +272,34 @@ func (a *testApp) registerRoutes(mux *http.ServeMux, c *cluster.Cluster, resolve
 		json.NewEncoder(w).Encode(map[string]int{"count": n})
 	})
 
+	// POST /ask?target=<actorID>&ns=<namespace>&payload=<string>&timeout=<duration>
+	// Asks an actor by PID and returns the reply.
+	mux.HandleFunc("/ask", func(w http.ResponseWriter, r *http.Request) {
+		target := r.URL.Query().Get("target")
+		ns := r.URL.Query().Get("ns")
+		payload := r.URL.Query().Get("payload")
+		timeoutStr := r.URL.Query().Get("timeout")
+		if timeoutStr == "" {
+			timeoutStr = "5s"
+		}
+		timeout, err := time.ParseDuration(timeoutStr)
+		if err != nil {
+			http.Error(w, "bad timeout: "+err.Error(), 400)
+			return
+		}
+		if ns == "" {
+			ns = a.rt.NodeID()
+		}
+
+		pid := actor.PID{Namespace: ns, ActorID: target, Generation: 1}
+		result, err := a.rt.AskPID(r.Context(), pid, payload, timeout)
+		if err != nil {
+			json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]any{"payload": result.Payload, "request_id": result.RequestID})
+	})
+
 	// POST /publish?topic=<topic>&payload=<string>
 	mux.HandleFunc("/publish", func(w http.ResponseWriter, r *http.Request) {
 		topic := r.URL.Query().Get("topic")

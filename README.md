@@ -35,6 +35,9 @@ Zero external dependencies. Single Go module.
 - **Distributed PubSub** (Phoenix.PubSub model): subscriptions stay local, publications broadcast to all nodes. `DirectPubSubAdapter` (fan-out to all) and `GossipPubSubAdapter` (epidemic gossip) included. No re-broadcast loops.
 - **Leader election**: `RingElection` — deterministic from membership (hash-based, no voting protocol). Scoped elections (multiple independent elections concurrently). Monotonically increasing terms for fencing.
 - **Cluster supervision**: user-space `ClusterSupervisor` that watches for node failures, uses leader election for single-decision-maker semantics, and delegates to a pluggable `ClusterSupervisionPolicy` for placement decisions. `SimpleRestartPolicy` included.
+- **Singleton actors**: `SingletonManager` guarantees exactly one instance of an actor runs cluster-wide. Each singleton gets its own election scope — singletons distribute across nodes via consistent hashing (not all on the leader). On leadership change, the actor stops on the old node and starts on the new one.
+- **Distributed Ask**: `AskPID(ctx, pid, payload, timeout)` — request-response across nodes. The reply traverses the transport back via node-qualified `__ask_reply@nodeID` namespaces.
+- **Graceful drain**: `Drain(ctx, cluster, cfg, opts...)` — planned shutdown. Emits `MemberLeave` (vs `MemberFailed`), stops singletons so they migrate, deregisters names, waits for in-flight work, then stops transport.
 - **Membership events**: `cluster.membership` PubSub topic for actors to observe join/leave/fail. `Runtime.ClusterMembers()` query API.
 - **Gossip protocol**: generic `GossipProtocol` with configurable interval and fanout. Used by CRDT registry and gossip PubSub adapter.
 
@@ -42,7 +45,7 @@ Zero external dependencies. Single Go module.
 
 Standalone, extractable CRDT package with zero dependencies on the actor system.
 
-- `VectorClock` / `VectorTimestamp`: causal ordering, merge, happens-before, concurrency detection.
+- `VectorTimestamp`: causal ordering, merge, happens-before, concurrency detection.
 - `Tag`: unique operation identifier with `Dominates()` for deterministic tiebreak.
 - `ORSet`: Observed-Remove Set with digest-based anti-entropy. `Add`, `Put`, `Remove`, `RemoveIf`, `Filter`. `Digest` / `DeltaFor` / `MergeDelta` for synchronization. Tombstone compaction with configurable TTL. Thread-safe.
 
@@ -159,8 +162,9 @@ c1.Start(context.Background())
 ### Messaging
 
 - `ActorRef.Send(ctx, payload)` — fire-and-forget
-- `ActorRef.Ask(ctx, payload, timeout)` — request-response
-- `ActorRef.SendPID(ctx, pid, payload)` — PID-addressed (local or remote)
+- `ActorRef.Ask(ctx, payload, timeout)` — request-response (local actor by ID)
+- `AskPID(ctx, pid, payload, timeout)` — request-response by PID (local or remote)
+- `ActorRef.SendPID(ctx, pid, payload)` — PID-addressed fire-and-forget (local or remote)
 - `ActorRef.CrossSendActorID(ctx, targetID, payload)` — cross-actor by ID
 - `ActorRef.CrossSendPID(ctx, pid, payload)` — cross-actor by PID
 
@@ -170,6 +174,8 @@ c1.Start(context.Background())
 - `ResolvePID(pid)`, `PIDForActor(actorID)`
 - `RegisterName(actorID, name, namespace)`, `LookupName(name)`, `UnregisterName(name)`
 - `LookupName` falls back to cluster registry when local miss
+- `SendName(ctx, name, payload)` — lookup + send in one call (local or remote)
+- `AskName(ctx, name, payload, timeout)` — lookup + ask in one call (local or remote)
 
 ### PubSub
 
@@ -184,6 +190,35 @@ c1.Start(context.Background())
 - `NodeID()` — local node identity
 - `ClusterMembers()` — current membership
 - `PublishMembershipEvent(ctx, event)` — emits on `cluster.membership` topic
+- `AskPID(ctx, pid, payload, timeout)` — distributed request-response
+
+### Singleton Actors
+
+```go
+sm := cluster.NewSingletonManager(rt, election, registry)
+sm.Register(cluster.SingletonSpec{
+    Name:    "scheduler",
+    Handler: schedulerHandler,
+})
+sm.Register(cluster.SingletonSpec{
+    Name:    "rate-limiter",
+    Handler: rateLimiterHandler,
+})
+sm.Start(ctx)
+// Singletons distribute across nodes automatically.
+// sm.Running() shows which ones are on this node.
+```
+
+### Graceful Drain
+
+```go
+// Planned shutdown (deploy, scale-down):
+cluster.Drain(ctx, c, cluster.DrainConfig{Timeout: 30 * time.Second},
+    cluster.WithSingletonManager(sm),  // singletons migrate to other nodes
+    cluster.WithRegistry(registry),     // names deregistered
+)
+// Peers see MemberLeave (not MemberFailed), so no false failure recovery.
+```
 
 ### Observability
 
@@ -444,6 +479,29 @@ type PlacementDecision struct {
     TargetNode NodeID
     Action     PlacementAction // PlacementRestart or PlacementAbandon
 }
+```
+
+### SingletonSpec
+
+```go
+type SingletonSpec struct {
+    Name         string           // actor ID and registered name
+    InitialState any
+    Handler      actor.Handler
+    Options      []actor.ActorOption
+}
+```
+
+### DrainConfig
+
+```go
+type DrainConfig struct {
+    Timeout time.Duration // max wait for in-flight work; defaults to 30s
+}
+
+// Options:
+func WithSingletonManager(sm *SingletonManager) DrainOption
+func WithRegistry(r *CRDTRegistry) DrainOption
 ```
 
 ## Feature Specs
