@@ -21,6 +21,12 @@ type Hooks interface {
 	ObserveRouterOutcome(strategy string, outcome string)
 	ObserveBatchOutcome(result string)
 	ObservePubSubOutcome(operation string, result string, matchedCount int)
+
+	// Cluster metrics
+	ObserveRemoteSendLatency(targetNode string, d time.Duration)
+	ObserveRemoteSendOutcome(targetNode string, outcome string)
+	ObserveClusterMemberEvent(eventType string)
+	ObserveCodecLatency(operation string, d time.Duration)
 }
 
 type NopHooks struct{}
@@ -43,3 +49,7 @@ func (NopHooks) ObserveAskOutcome(string)                           {}
 func (NopHooks) ObserveRouterOutcome(string, string)                {}
 func (NopHooks) ObserveBatchOutcome(string)                         {}
 func (NopHooks) ObservePubSubOutcome(string, string, int)           {}
+func (NopHooks) ObserveRemoteSendLatency(string, time.Duration)     {}
+func (NopHooks) ObserveRemoteSendOutcome(string, string)            {}
+func (NopHooks) ObserveClusterMemberEvent(string)                   {}
+func (NopHooks) ObserveCodecLatency(string, time.Duration)          {}
