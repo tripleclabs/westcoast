@@ -68,6 +68,11 @@ type Runtime struct {
 	randSrc   *rand.Rand
 	brokerMu  sync.RWMutex
 	brokers   map[string]*pubsubBrokerService
+
+	// Cluster integration (nil when single-node).
+	nodeID     string              // local node identity; "" when no cluster
+	remoteSend RemoteSenderFunc    // sends messages to remote nodes
+	remoteAsk  RemoteAskSenderFunc // sends ask messages to remote nodes
 }
 
 type pendingAsk struct {
@@ -85,6 +90,14 @@ type routerRuntimeState struct {
 
 const askReplyNamespace = "__ask_reply"
 
+// RemoteSenderFunc sends a message to a remote node. Used by the cluster
+// integration layer to inject remote send capability without creating an
+// import cycle.
+type RemoteSenderFunc func(ctx context.Context, senderActorID string, pid PID, payload any, msgID uint64) (PIDSendAck, error)
+
+// RemoteAskSenderFunc sends an ask request to a remote node.
+type RemoteAskSenderFunc func(ctx context.Context, senderActorID string, pid PID, payload any, msgID uint64, askRequestID string, replyTo PID) (PIDSendAck, error)
+
 func WithEmitter(e EventEmitter) RuntimeOption {
 	return func(r *Runtime) { r.emitter = e }
 }
@@ -96,6 +109,26 @@ func WithSupervisor(p SupervisorPolicy) RuntimeOption {
 func WithMetrics(h metrics.Hooks) RuntimeOption {
 	return func(r *Runtime) { r.metrics = h }
 }
+
+// WithNodeID sets the local node identity. When set, PIDs issued without
+// an explicit namespace default to this node ID. Required for cluster operation.
+func WithNodeID(id string) RuntimeOption {
+	return func(r *Runtime) { r.nodeID = id }
+}
+
+// WithRemoteSend injects the function used to send messages to remote nodes.
+// This is called by the cluster integration layer during setup.
+func WithRemoteSend(fn RemoteSenderFunc) RuntimeOption {
+	return func(r *Runtime) { r.remoteSend = fn }
+}
+
+// WithRemoteAskSend injects the function used to send ask requests to remote nodes.
+func WithRemoteAskSend(fn RemoteAskSenderFunc) RuntimeOption {
+	return func(r *Runtime) { r.remoteAsk = fn }
+}
+
+// NodeID returns the local node identity, or "" if not clustered.
+func (r *Runtime) NodeID() string { return r.nodeID }
 
 func NewRuntime(opts ...RuntimeOption) *Runtime {
 	r := &Runtime{
@@ -975,7 +1008,13 @@ func (r *Runtime) sendWithAskContext(ctx context.Context, actorID string, payloa
 
 func (r *Runtime) newAskRequest(targetActor string) pendingAsk {
 	requestID := fmt.Sprintf("ask-%d", r.askSeq.Add(1))
-	replyTo := PID{Namespace: askReplyNamespace, ActorID: requestID, Generation: 1}
+	// When clustered, qualify the ask-reply namespace with the node ID
+	// so remote nodes know where to send the reply back.
+	ns := askReplyNamespace
+	if r.nodeID != "" {
+		ns = askReplyNamespace + "@" + r.nodeID
+	}
+	replyTo := PID{Namespace: ns, ActorID: requestID, Generation: 1}
 	wait := pendingAsk{
 		requestID:   requestID,
 		targetActor: targetActor,
@@ -1041,7 +1080,13 @@ func (r *Runtime) Ask(ctx context.Context, actorID string, payload any, timeout 
 }
 
 func (r *Runtime) routeAskReply(pid PID, payload any, msgID uint64) (PIDSendAck, bool) {
-	if pid.Namespace != askReplyNamespace {
+	// Match both "__ask_reply" and "__ask_reply@<nodeID>".
+	if !isAskReplyNamespace(pid.Namespace) {
+		return PIDSendAck{}, false
+	}
+	// If the ask-reply is for a different node, don't handle locally —
+	// let sendPIDWithSender route it remotely.
+	if r.nodeID != "" && pid.Namespace != askReplyNamespace && pid.Namespace != askReplyNamespace+"@"+r.nodeID {
 		return PIDSendAck{}, false
 	}
 	replyKey := pid.Key()
@@ -1166,6 +1211,10 @@ func (r *Runtime) IssuePID(namespace, actorID string) (PID, error) {
 	if _, ok := r.registry.get(actorID); !ok {
 		return PID{}, ErrActorNotFound
 	}
+	// Default to the local node ID when cluster is active.
+	if namespace == "" && r.nodeID != "" {
+		namespace = r.nodeID
+	}
 	pid := PID{Namespace: namespace, ActorID: actorID, Generation: 1}
 	if err := pid.Validate(); err != nil {
 		return PID{}, err
@@ -1208,6 +1257,17 @@ func (r *Runtime) sendPIDWithSender(ctx context.Context, senderActorID string, p
 			r.emitPID(EventPIDRejected, pid, msgID, askAck.Outcome, string(askAck.Outcome))
 		}
 		return askAck
+	}
+
+	// Remote routing: if the PID targets a different node, send via transport.
+	if r.remoteSend != nil && pid.IsRemote(r.nodeID) {
+		ack, err := r.remoteSend(ctx, senderActorID, pid, payload, msgID)
+		if err != nil {
+			r.emitPID(EventPIDRejected, pid, msgID, PIDUnresolved, err.Error())
+			return ack
+		}
+		r.emitPID(EventPIDDelivered, pid, msgID, PIDDelivered, "")
+		return ack
 	}
 
 	start := r.now()
@@ -1376,4 +1436,16 @@ func (r *Runtime) UnregisterName(name string) RegistryLookupAck {
 	r.metrics.ObserveRegistryOperation(string(RegistryUnregisterSuccess))
 	r.emitRegistry(EventRegistryUnregister, entry.name, entry.actorID, entry.pid, RegistryUnregisterSuccess, "")
 	return RegistryLookupAck{Result: RegistryUnregisterSuccess, Name: entry.name, PID: entry.pid}
+}
+
+// DeliverLocal delivers an inbound message from a remote node to a local actor.
+// This implements the RuntimeBridge interface used by the cluster InboundDispatcher.
+func (r *Runtime) DeliverLocal(ctx context.Context, actorID string, payload any, askCtx *AskRequestContext) SubmitAck {
+	return r.sendWithAskContext(ctx, actorID, payload, askCtx)
+}
+
+// DeliverPID delivers a message to a local PID. Used for ask-reply routing
+// when a reply arrives from a remote node.
+func (r *Runtime) DeliverPID(ctx context.Context, pid PID, payload any) PIDSendAck {
+	return r.SendPID(ctx, pid, payload)
 }
