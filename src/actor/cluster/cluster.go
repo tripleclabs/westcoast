@@ -22,6 +22,11 @@ type ClusterConfig struct {
 	// OnEnvelope is called when an envelope arrives from a remote node.
 	// Set by the Runtime integration layer (Phase 2).
 	OnEnvelope func(from NodeID, env Envelope)
+
+	// OnMemberEvent is called when cluster membership changes.
+	// Set by the Runtime integration layer (Phase 6) to publish
+	// membership events on the cluster.membership pubsub topic.
+	OnMemberEvent func(event MemberEvent)
 }
 
 // Cluster manages the lifecycle of a single node within a cluster.
@@ -282,6 +287,11 @@ func (c *Cluster) handleMemberEvent(ev MemberEvent) {
 
 	// Recompute desired connections based on topology.
 	c.reconcileConnectionsLocked()
+
+	// Notify the Runtime layer (outside the lock to avoid deadlocks).
+	if c.cfg.OnMemberEvent != nil {
+		go c.cfg.OnMemberEvent(ev)
+	}
 }
 
 // reconcileConnectionsLocked adjusts connections to match the topology's

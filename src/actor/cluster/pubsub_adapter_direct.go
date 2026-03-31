@@ -1,0 +1,101 @@
+package cluster
+
+import (
+	"context"
+	"encoding/gob"
+	"time"
+)
+
+func init() {
+	gob.Register(pubsubBroadcastMsg{})
+}
+
+// pubsubBroadcastMsg is the wire format for a cross-node publication.
+type pubsubBroadcastMsg struct {
+	Topic         string
+	Payload       []byte // codec-encoded publish payload
+	PublisherNode NodeID
+}
+
+// pubsubBroadcastDecoded carries the decoded payload for local delivery.
+type pubsubBroadcastDecoded struct {
+	Topic         string
+	Payload       any
+	PublisherNode NodeID
+}
+
+const pubsubEnvelopeType = "__pubsub_broadcast"
+
+// DirectPubSubAdapter broadcasts publications to every other node in the
+// cluster via direct sends. Simple and correct for small clusters.
+// For larger clusters, use GossipPubSubAdapter.
+type DirectPubSubAdapter struct {
+	cluster *Cluster
+	codec   Codec
+	handler RemotePublishHandler
+}
+
+func NewDirectPubSubAdapter(cluster *Cluster, codec Codec) *DirectPubSubAdapter {
+	return &DirectPubSubAdapter{
+		cluster: cluster,
+		codec:   codec,
+	}
+}
+
+func (a *DirectPubSubAdapter) Broadcast(ctx context.Context, topic string, payload any, publisherNode NodeID) error {
+	payloadBytes, err := a.codec.Encode(payload)
+	if err != nil {
+		return err
+	}
+	msg := pubsubBroadcastMsg{
+		Topic:         topic,
+		Payload:       payloadBytes,
+		PublisherNode: publisherNode,
+	}
+	encoded, err := a.codec.Encode(msg)
+	if err != nil {
+		return err
+	}
+
+	members := a.cluster.Members()
+	for _, m := range members {
+		env := Envelope{
+			SenderNode:     a.cluster.LocalNodeID(),
+			TargetNode:     m.ID,
+			TypeName:       pubsubEnvelopeType,
+			Payload:        encoded,
+			SentAtUnixNano: time.Now().UnixNano(),
+		}
+		// Fire-and-forget — partial delivery is acceptable for pubsub.
+		a.cluster.SendRemote(ctx, m.ID, env)
+	}
+	return nil
+}
+
+func (a *DirectPubSubAdapter) SetHandler(handler RemotePublishHandler) {
+	a.handler = handler
+}
+
+// HandleInbound processes an incoming pubsub broadcast envelope.
+func (a *DirectPubSubAdapter) HandleInbound(env Envelope) {
+	if a.handler == nil {
+		return
+	}
+	var decoded any
+	if err := a.codec.Decode(env.Payload, &decoded); err != nil {
+		return
+	}
+	msg, ok := decoded.(pubsubBroadcastMsg)
+	if !ok {
+		return
+	}
+	// Decode the inner payload from bytes back to a Go value.
+	var payload any
+	if err := a.codec.Decode(msg.Payload, &payload); err != nil {
+		return
+	}
+	a.handler(msg.Topic, payload, msg.PublisherNode)
+}
+
+func (a *DirectPubSubAdapter) Start(ctx context.Context) error { return nil }
+func (a *DirectPubSubAdapter) Stop() error                     { return nil }

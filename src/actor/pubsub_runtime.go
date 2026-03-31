@@ -119,6 +119,22 @@ func (r *Runtime) BrokerPublish(ctx context.Context, brokerID, topic string, pay
 	})
 }
 
+// BrokerPublishRemote injects a publication from a remote node into the
+// local broker. The broker dispatches to local subscribers only — it does
+// NOT re-broadcast. This prevents infinite loops in cluster pubsub.
+func (r *Runtime) BrokerPublishRemote(ctx context.Context, brokerID, topic string, payload any, publisherActorID string) SubmitAck {
+	brokerID = defaultBrokerID(brokerID)
+	broker, err := r.EnsureBrokerActor(brokerID)
+	if err != nil {
+		return SubmitAck{Result: SubmitRejectedFound}
+	}
+	return broker.Send(ctx, brokerRemotePublishCommand{
+		Topic:            topic,
+		Payload:          payload,
+		PublisherActorID: publisherActorID,
+	})
+}
+
 func defaultBrokerID(brokerID string) string {
 	if brokerID != "" {
 		return brokerID

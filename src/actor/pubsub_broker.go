@@ -7,6 +7,15 @@ import (
 
 const DefaultBrokerActorID = "__native_pubsub_broker"
 
+// brokerRemotePublishCommand is an internal marker for publications
+// arriving from remote nodes. The broker dispatches locally without
+// re-broadcasting.
+type brokerRemotePublishCommand struct {
+	Topic            string
+	Payload          any
+	PublisherActorID string
+}
+
 type pubsubBrokerService struct {
 	runtime      *Runtime
 	brokerID     string
@@ -33,7 +42,13 @@ func (b *pubsubBrokerService) handler(ctx context.Context, state any, msg Messag
 	case BrokerUnsubscribeCommand:
 		b.handleUnsubscribe(ctx, msg, cmd)
 	case BrokerPublishCommand:
-		b.handlePublish(ctx, cmd)
+		b.handlePublish(ctx, cmd, false)
+	case brokerRemotePublishCommand:
+		b.handlePublish(ctx, BrokerPublishCommand{
+			Topic:            cmd.Topic,
+			Payload:          cmd.Payload,
+			PublisherActorID: cmd.PublisherActorID,
+		}, true)
 	default:
 		_ = isBrokerCommand(msg.Payload)
 		b.runtime.emitBroker(b.brokerID, BrokerOperationPublish, "", PID{}, 0, BrokerOutcomeInvalidCommand, ErrPubSubInvalidCommand.Error())
@@ -143,7 +158,7 @@ func (b *pubsubBrokerService) handleUnsubscribe(ctx context.Context, msg Message
 	})
 }
 
-func (b *pubsubBrokerService) handlePublish(ctx context.Context, cmd BrokerPublishCommand) {
+func (b *pubsubBrokerService) handlePublish(ctx context.Context, cmd BrokerPublishCommand, isRemote bool) {
 	topic, err := parsePublishTopic(cmd.Topic)
 	if err != nil {
 		b.runtime.emitBroker(b.brokerID, BrokerOperationPublish, cmd.Topic, PID{}, 0, BrokerOutcomeInvalidTopic, ErrPubSubInvalidTopic.Error())
@@ -153,6 +168,11 @@ func (b *pubsubBrokerService) handlePublish(ctx context.Context, cmd BrokerPubli
 	targets := b.trie.match(topic)
 	b.mu.RUnlock()
 	b.dispatchPublish(ctx, cmd, targets)
+
+	// Broadcast to other cluster nodes (only for locally-originated publishes).
+	if !isRemote && b.runtime.pubsubBroadcast != nil {
+		b.runtime.pubsubBroadcast(ctx, cmd.Topic, cmd.Payload)
+	}
 }
 
 func (b *pubsubBrokerService) dispatchPublish(ctx context.Context, cmd BrokerPublishCommand, targets []PID) {

@@ -78,6 +78,12 @@ type Runtime struct {
 	clusterRegister   func(name string, pid PID) error
 	clusterLookup     func(name string) (PID, bool)
 	clusterUnregister func(name string) (PID, bool)
+
+	// Cluster pubsub integration (nil when using local-only pubsub).
+	pubsubBroadcast PubSubBroadcastFunc
+
+	// Cluster membership query (nil when single-node).
+	clusterMembers func() []ClusterMemberInfo
 }
 
 type pendingAsk struct {
@@ -102,6 +108,28 @@ type RemoteSenderFunc func(ctx context.Context, senderActorID string, pid PID, p
 
 // RemoteAskSenderFunc sends an ask request to a remote node.
 type RemoteAskSenderFunc func(ctx context.Context, senderActorID string, pid PID, payload any, msgID uint64, askRequestID string, replyTo PID) (PIDSendAck, error)
+
+// PubSubBroadcastFunc broadcasts a publication to all other cluster nodes.
+// The payload is the raw Go value — the adapter handles encoding.
+type PubSubBroadcastFunc func(ctx context.Context, topic string, payload any) error
+
+// ClusterMemberInfo describes a cluster member as seen by the Runtime.
+type ClusterMemberInfo struct {
+	ID   string
+	Addr string
+	Tags map[string]string
+}
+
+// ClusterMembershipTopic is the well-known pubsub topic for membership events.
+// Actors can subscribe to this topic to receive ClusterMembershipEvent payloads.
+const ClusterMembershipTopic = "cluster.membership"
+
+// ClusterMembershipEvent is published on the cluster.membership topic when
+// the cluster membership changes.
+type ClusterMembershipEvent struct {
+	Type   string // "join", "leave", "failed", "updated"
+	Member ClusterMemberInfo
+}
 
 func WithEmitter(e EventEmitter) RuntimeOption {
 	return func(r *Runtime) { r.emitter = e }
@@ -134,6 +162,32 @@ func WithRemoteAskSend(fn RemoteAskSenderFunc) RuntimeOption {
 
 // NodeID returns the local node identity, or "" if not clustered.
 func (r *Runtime) NodeID() string { return r.nodeID }
+
+// WithPubSubBroadcast injects the function used to broadcast publications
+// to other cluster nodes. When set, local publishes are also broadcast.
+func WithPubSubBroadcast(fn PubSubBroadcastFunc) RuntimeOption {
+	return func(r *Runtime) { r.pubsubBroadcast = fn }
+}
+
+// WithClusterMembers injects the function to query cluster membership.
+func WithClusterMembers(fn func() []ClusterMemberInfo) RuntimeOption {
+	return func(r *Runtime) { r.clusterMembers = fn }
+}
+
+// ClusterMembers returns the current cluster membership, or nil if not clustered.
+func (r *Runtime) ClusterMembers() []ClusterMemberInfo {
+	if r.clusterMembers == nil {
+		return nil
+	}
+	return r.clusterMembers()
+}
+
+// PublishMembershipEvent publishes a membership change on the well-known
+// cluster.membership pubsub topic. Called by the cluster integration layer
+// when it receives membership events.
+func (r *Runtime) PublishMembershipEvent(ctx context.Context, event ClusterMembershipEvent) {
+	r.BrokerPublish(ctx, "", ClusterMembershipTopic, event, "cluster")
+}
 
 // WithClusterRegistry injects cluster-wide registry functions.
 // When set, RegisterName/LookupName/UnregisterName delegate to
