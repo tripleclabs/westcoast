@@ -17,6 +17,9 @@ type RemoteSender struct {
 }
 
 func NewRemoteSender(cluster *Cluster, codec Codec, m metrics.Hooks) *RemoteSender {
+	if m == nil {
+		m = metrics.NopHooks{}
+	}
 	return &RemoteSender{
 		cluster: cluster,
 		codec:   codec,

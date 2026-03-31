@@ -9,14 +9,11 @@ import (
 
 func TestFixedProvider_JoinOnSuccessfulProbe(t *testing.T) {
 	p := NewFixedProvider(FixedProviderConfig{
-		Seeds:             []string{"127.0.0.1:9001"},
+		Seeds:             []NodeMeta{{ID: "node-2", Addr: "127.0.0.1:9001"}},
 		HeartbeatInterval: 50 * time.Millisecond,
 		FailureThreshold:  3,
 	})
-
-	p.Dial = func(ctx context.Context, addr string) (NodeMeta, error) {
-		return NodeMeta{ID: "node-2", Addr: addr}, nil
-	}
+	// nil Probe → assumes alive immediately.
 
 	self := NodeMeta{ID: "node-1", Addr: "127.0.0.1:9000"}
 	if err := p.Start(self); err != nil {
@@ -43,21 +40,21 @@ func TestFixedProvider_FailureAfterThreshold(t *testing.T) {
 	probeCount := 0
 
 	p := NewFixedProvider(FixedProviderConfig{
-		Seeds:             []string{"127.0.0.1:9001"},
+		Seeds:             []NodeMeta{{ID: "node-2", Addr: "127.0.0.1:9001"}},
 		HeartbeatInterval: 30 * time.Millisecond,
 		FailureThreshold:  2,
 	})
 
-	p.Dial = func(ctx context.Context, addr string) (NodeMeta, error) {
+	p.Probe = func(ctx context.Context, addr string) error {
 		mu.Lock()
 		probeCount++
 		count := probeCount
 		mu.Unlock()
 
 		if count <= 1 {
-			return NodeMeta{ID: "node-2", Addr: addr}, nil
+			return nil // alive
 		}
-		return NodeMeta{}, context.DeadlineExceeded
+		return context.DeadlineExceeded // unreachable
 	}
 
 	self := NodeMeta{ID: "node-1", Addr: "127.0.0.1:9000"}
@@ -66,13 +63,11 @@ func TestFixedProvider_FailureAfterThreshold(t *testing.T) {
 	}
 	defer p.Stop()
 
-	// First event: join.
 	ev := waitEvent(t, p.Events(), 500*time.Millisecond)
 	if ev.Type != MemberJoin {
 		t.Fatalf("expected join, got %v", ev.Type)
 	}
 
-	// After FailureThreshold consecutive failures: failed event.
 	ev = waitEvent(t, p.Events(), 500*time.Millisecond)
 	if ev.Type != MemberFailed {
 		t.Fatalf("expected failed, got %v", ev.Type)
@@ -86,13 +81,9 @@ func TestFixedProvider_FailureAfterThreshold(t *testing.T) {
 
 func TestFixedProvider_IgnoresSelf(t *testing.T) {
 	p := NewFixedProvider(FixedProviderConfig{
-		Seeds:             []string{"127.0.0.1:9000"},
+		Seeds:             []NodeMeta{{ID: "node-1", Addr: "127.0.0.1:9000"}},
 		HeartbeatInterval: 30 * time.Millisecond,
 	})
-
-	p.Dial = func(ctx context.Context, addr string) (NodeMeta, error) {
-		return NodeMeta{ID: "node-1", Addr: addr}, nil
-	}
 
 	self := NodeMeta{ID: "node-1", Addr: "127.0.0.1:9000"}
 	if err := p.Start(self); err != nil {
@@ -100,7 +91,6 @@ func TestFixedProvider_IgnoresSelf(t *testing.T) {
 	}
 	defer p.Stop()
 
-	// Should NOT emit a join event for self.
 	select {
 	case ev := <-p.Events():
 		t.Fatalf("unexpected event: %+v", ev)
@@ -114,22 +104,21 @@ func TestFixedProvider_Rejoin(t *testing.T) {
 	probeCount := 0
 
 	p := NewFixedProvider(FixedProviderConfig{
-		Seeds:             []string{"127.0.0.1:9001"},
+		Seeds:             []NodeMeta{{ID: "node-2", Addr: "127.0.0.1:9001"}},
 		HeartbeatInterval: 30 * time.Millisecond,
 		FailureThreshold:  1,
 	})
 
-	p.Dial = func(ctx context.Context, addr string) (NodeMeta, error) {
+	p.Probe = func(ctx context.Context, addr string) error {
 		mu.Lock()
 		probeCount++
 		count := probeCount
 		mu.Unlock()
 
-		// Succeed, then fail once, then succeed again.
 		if count == 2 {
-			return NodeMeta{}, context.DeadlineExceeded
+			return context.DeadlineExceeded
 		}
-		return NodeMeta{ID: "node-2", Addr: addr}, nil
+		return nil
 	}
 
 	self := NodeMeta{ID: "node-1", Addr: "127.0.0.1:9000"}
@@ -148,7 +137,6 @@ func TestFixedProvider_Rejoin(t *testing.T) {
 		t.Fatalf("expected failed, got %v", ev.Type)
 	}
 
-	// Node comes back.
 	ev = waitEvent(t, p.Events(), 500*time.Millisecond)
 	if ev.Type != MemberJoin {
 		t.Fatalf("expected rejoin, got %v", ev.Type)
@@ -156,7 +144,7 @@ func TestFixedProvider_Rejoin(t *testing.T) {
 }
 
 func TestFixedProvider_DoubleStartReturnsError(t *testing.T) {
-	p := NewFixedProvider(FixedProviderConfig{Seeds: []string{}})
+	p := NewFixedProvider(FixedProviderConfig{})
 	self := NodeMeta{ID: "node-1", Addr: ":0"}
 	if err := p.Start(self); err != nil {
 		t.Fatalf("first start: %v", err)
@@ -187,7 +175,6 @@ func TestFixedProvider_AddMember(t *testing.T) {
 		t.Fatalf("expected 1 member, got %d", len(p.Members()))
 	}
 
-	// Duplicate add is a no-op.
 	p.AddMember(NodeMeta{ID: "node-2", Addr: "127.0.0.1:9001"})
 	if len(p.Members()) != 1 {
 		t.Fatalf("duplicate add should be no-op")

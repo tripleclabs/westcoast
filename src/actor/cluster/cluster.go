@@ -221,6 +221,18 @@ func (c *Cluster) memberListLocked() []NodeMeta {
 	return out
 }
 
+// SetOnEnvelope sets the callback for inbound envelopes.
+// Must be called before Start.
+func (c *Cluster) SetOnEnvelope(fn func(from NodeID, env Envelope)) {
+	c.cfg.OnEnvelope = fn
+}
+
+// SetOnMemberEvent sets the callback for membership changes.
+// Must be called before Start, or dynamically by the ClusterSupervisor.
+func (c *Cluster) SetOnMemberEvent(fn func(event MemberEvent)) {
+	c.cfg.OnMemberEvent = fn
+}
+
 // IsConnected returns whether a direct connection to the target exists.
 func (c *Cluster) IsConnected(target NodeID) bool {
 	c.mu.RLock()

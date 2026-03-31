@@ -8,8 +8,8 @@ import (
 
 // FixedProviderConfig configures the static seed-list cluster provider.
 type FixedProviderConfig struct {
-	// Seeds is the list of known peer addresses (host:port).
-	Seeds []string
+	// Seeds is the list of known peers. Each entry must have ID and Addr set.
+	Seeds []NodeMeta
 	// HeartbeatInterval controls how often peers are probed.
 	// Defaults to 5s if zero.
 	HeartbeatInterval time.Duration
@@ -30,9 +30,10 @@ type FixedProvider struct {
 	started bool
 	cancel  context.CancelFunc
 
-	// Dial is called to probe a seed address. Injected for testing.
-	// Returns the remote node's metadata on success.
-	Dial func(ctx context.Context, addr string) (NodeMeta, error)
+	// Probe checks whether a peer at the given address is alive.
+	// Return nil for alive, error for unreachable. Injected for testing.
+	// If nil, peers are assumed alive on first contact via AddMember.
+	Probe func(ctx context.Context, addr string) error
 }
 
 type fixedPeerState struct {
@@ -101,7 +102,6 @@ func (p *FixedProvider) Events() <-chan MemberEvent {
 }
 
 func (p *FixedProvider) heartbeatLoop(ctx context.Context) {
-	// Do an initial probe immediately.
 	p.probeAll(ctx)
 
 	ticker := time.NewTicker(p.cfg.HeartbeatInterval)
@@ -118,34 +118,33 @@ func (p *FixedProvider) heartbeatLoop(ctx context.Context) {
 }
 
 func (p *FixedProvider) probeAll(ctx context.Context) {
-	for _, addr := range p.cfg.Seeds {
+	for _, seed := range p.cfg.Seeds {
 		if ctx.Err() != nil {
 			return
 		}
-		p.probeSeed(ctx, addr)
+		if seed.ID == p.self.ID {
+			continue
+		}
+		p.probeSeed(ctx, seed)
 	}
 }
 
-func (p *FixedProvider) probeSeed(ctx context.Context, addr string) {
-	if p.Dial == nil {
+func (p *FixedProvider) probeSeed(ctx context.Context, seed NodeMeta) {
+	if p.Probe == nil {
+		// No probe function — assume alive on first contact.
+		p.handleProbeSuccess(seed)
 		return
 	}
 
 	probeCtx, cancel := context.WithTimeout(ctx, p.cfg.HeartbeatInterval/2)
 	defer cancel()
 
-	meta, err := p.Dial(probeCtx, addr)
-	if err != nil {
-		p.handleProbeFailure(addr)
+	if err := p.Probe(probeCtx, seed.Addr); err != nil {
+		p.handleProbeFailure(seed.ID)
 		return
 	}
 
-	// Don't track self.
-	if meta.ID == p.self.ID {
-		return
-	}
-
-	p.handleProbeSuccess(meta)
+	p.handleProbeSuccess(seed)
 }
 
 func (p *FixedProvider) handleProbeSuccess(meta NodeMeta) {
@@ -154,7 +153,6 @@ func (p *FixedProvider) handleProbeSuccess(meta NodeMeta) {
 
 	ps, exists := p.members[meta.ID]
 	if !exists {
-		// New node discovered.
 		p.members[meta.ID] = &fixedPeerState{
 			meta:     meta,
 			alive:    true,
@@ -168,31 +166,24 @@ func (p *FixedProvider) handleProbeSuccess(meta NodeMeta) {
 	ps.lastSeen = time.Now()
 
 	if !ps.alive {
-		// Node came back.
 		ps.alive = true
 		ps.meta = meta
 		p.emit(MemberEvent{Type: MemberJoin, Member: meta})
 	}
 }
 
-func (p *FixedProvider) handleProbeFailure(addr string) {
+func (p *FixedProvider) handleProbeFailure(id NodeID) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	// Find the peer by address.
-	for _, ps := range p.members {
-		if ps.meta.Addr != addr {
-			continue
-		}
-		if !ps.alive {
-			return // already marked failed
-		}
-		ps.consecutiveFails++
-		if ps.consecutiveFails >= p.cfg.FailureThreshold {
-			ps.alive = false
-			p.emit(MemberEvent{Type: MemberFailed, Member: ps.meta})
-		}
+	ps, ok := p.members[id]
+	if !ok || !ps.alive {
 		return
+	}
+	ps.consecutiveFails++
+	if ps.consecutiveFails >= p.cfg.FailureThreshold {
+		ps.alive = false
+		p.emit(MemberEvent{Type: MemberFailed, Member: ps.meta})
 	}
 }
 
@@ -200,12 +191,10 @@ func (p *FixedProvider) emit(ev MemberEvent) {
 	select {
 	case p.eventCh <- ev:
 	default:
-		// Drop if channel is full — consumer is too slow.
 	}
 }
 
-// AddMember manually registers a node. Useful for testing and for
-// bootstrapping when the dial function discovers node metadata.
+// AddMember manually registers a node. Useful for testing.
 func (p *FixedProvider) AddMember(meta NodeMeta) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
