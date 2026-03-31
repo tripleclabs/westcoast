@@ -36,7 +36,7 @@ type tombstone struct {
 // Tombstones are compacted after TombstoneTTL via Compact().
 type ORSet struct {
 	nodeID string
-	clock  *VectorClock
+	clock  *vectorClock
 	now    func() time.Time
 
 	mu         sync.RWMutex
@@ -62,7 +62,7 @@ func NewORSet(cfg ORSetConfig) *ORSet {
 	}
 	return &ORSet{
 		nodeID:       cfg.NodeID,
-		clock:        NewVectorClock(cfg.NodeID),
+		clock:        newVectorClock(cfg.NodeID),
 		now:          cfg.Now,
 		entries:      make(map[string]*Entry),
 		tombstones:   make(map[Tag]tombstone),

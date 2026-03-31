@@ -60,32 +60,33 @@ func (vt VectorTimestamp) Concurrent(other VectorTimestamp) bool {
 	return !vt.HappensBefore(other) && !other.HappensBefore(vt)
 }
 
-// VectorClock tracks causality for a single node.
-type VectorClock struct {
+// vectorClock tracks causality for a single node.
+// Not safe for concurrent use — the ORSet holds a mutex around all access.
+type vectorClock struct {
 	nodeID string
 	ts     VectorTimestamp
 }
 
-func NewVectorClock(nodeID string) *VectorClock {
-	return &VectorClock{
+func newVectorClock(nodeID string) *vectorClock {
+	return &vectorClock{
 		nodeID: nodeID,
 		ts:     VectorTimestamp{nodeID: 0},
 	}
 }
 
 // Tick increments this node's counter and returns the new timestamp.
-func (vc *VectorClock) Tick() VectorTimestamp {
+func (vc *vectorClock) Tick() VectorTimestamp {
 	vc.ts[vc.nodeID]++
 	return vc.ts.Clone()
 }
 
 // Merge incorporates a remote timestamp and returns the new local timestamp.
-func (vc *VectorClock) Merge(remote VectorTimestamp) VectorTimestamp {
+func (vc *vectorClock) Merge(remote VectorTimestamp) VectorTimestamp {
 	vc.ts = vc.ts.Merge(remote)
 	return vc.ts.Clone()
 }
 
 // Current returns a snapshot of the current timestamp.
-func (vc *VectorClock) Current() VectorTimestamp {
+func (vc *vectorClock) Current() VectorTimestamp {
 	return vc.ts.Clone()
 }

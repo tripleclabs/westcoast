@@ -45,8 +45,8 @@ func TestVectorTimestamp_Concurrent(t *testing.T) {
 }
 
 func TestVectorClock_TickAndMerge(t *testing.T) {
-	c1 := NewVectorClock("n1")
-	c2 := NewVectorClock("n2")
+	c1 := newVectorClock("n1")
+	c2 := newVectorClock("n2")
 
 	ts1 := c1.Tick()
 	ts2 := c2.Tick()
@@ -67,7 +67,7 @@ func TestVectorClock_TickAndMerge(t *testing.T) {
 }
 
 func TestVectorClock_CurrentIsCopy(t *testing.T) {
-	c := NewVectorClock("n1")
+	c := newVectorClock("n1")
 	c.Tick()
 	c.Tick()
 	cur := c.Current()

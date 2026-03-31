@@ -32,7 +32,6 @@ Zero external dependencies. Single Go module.
 - **Remote messaging**: transparent cross-node PID sends. `sendPIDWithSender` detects remote PIDs and routes through the transport layer. Ask/Reply works across nodes (node-qualified `__ask_reply@nodeID` namespaces).
 - **Distributed registry** (two strategies):
   - `CRDTRegistry`: eventually consistent, backed by `crdt.ORSet`. Digest-based anti-entropy gossip with tombstone compaction. Add-wins OR-Set semantics with LWW conflict resolution and deterministic tiebreak.
-  - `PartitionedRegistry`: hash-ring sharded. Deterministic name ownership via `Topology.Responsible`. Strong consistency for name lookups. Rebalances on membership changes.
 - **Distributed PubSub** (Phoenix.PubSub model): subscriptions stay local, publications broadcast to all nodes. `DirectPubSubAdapter` (fan-out to all) and `GossipPubSubAdapter` (epidemic gossip) included. No re-broadcast loops.
 - **Leader election**: `RingElection` — deterministic from membership (hash-based, no voting protocol). Scoped elections (multiple independent elections concurrently). Monotonically increasing terms for fencing.
 - **Cluster supervision**: user-space `ClusterSupervisor` that watches for node failures, uses leader election for single-decision-maker semantics, and delegates to a pluggable `ClusterSupervisionPolicy` for placement decisions. `SimpleRestartPolicy` included.

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/gob"
+	"sync"
 
 	"github.com/tripleclabs/westcoast/src/crdt"
 )
@@ -18,16 +19,7 @@ func init() {
 }
 
 // registryGossipMsg is the wire format for registry gossip.
-// A gossip round works as follows:
-//  1. Initiator sends a message with IsDigest=true, containing their Digest.
-//  2. Responder compares, computes the delta, and calls MergeDelta on itself
-//     with the initiator's entries (which it receives in a subsequent round).
-//
-// For simplicity we use a push model: each round, the node sends its full
-// state delta to peers based on an empty digest (i.e. "assume the peer has
-// nothing new"). The peer merges and the digest comparison on the NEXT round
-// ensures convergence. This is simpler than the request-response pattern
-// and works well with the periodic gossip model.
+// Contains only the entries/tombstones that changed since the last round.
 type registryGossipMsg struct {
 	Delta crdt.StateDelta
 }
@@ -36,16 +28,29 @@ const registryGossipProtocol = "crdt_registry"
 
 // RegistryGossip connects a CRDTRegistry to the GossipProtocol for
 // automatic state synchronization across the cluster.
+//
+// Each gossip round, it computes the diff between the current registry
+// state and the last state it sent, and only transmits the changes.
+// Peers merge the incoming delta. Convergence happens over multiple
+// rounds as each side pushes its diffs.
 type RegistryGossip struct {
 	registry *CRDTRegistry
 	gossip   *GossipProtocol
+
+	mu         sync.Mutex
+	lastDigest crdt.Digest // snapshot of what we sent last round
+	roundCount uint64      // counts gossip rounds
 }
 
-// NewRegistryGossip creates and starts a gossip-backed registry sync.
-// The gossip protocol will periodically push state deltas to peers and
-// merge incoming deltas.
+// fullSyncEvery controls how often a full state push is done to catch
+// peers that missed a diff round. Every N rounds, send full state.
+const fullSyncEvery = 10
+
 func NewRegistryGossip(registry *CRDTRegistry, cluster *Cluster, codec Codec, cfg GossipConfig) *RegistryGossip {
-	rg := &RegistryGossip{registry: registry}
+	rg := &RegistryGossip{
+		registry:   registry,
+		lastDigest: crdt.Digest{},
+	}
 
 	cfg.Protocol = registryGossipProtocol
 	cfg.OnProduce = rg.produce
@@ -55,27 +60,38 @@ func NewRegistryGossip(registry *CRDTRegistry, cluster *Cluster, codec Codec, cf
 	return rg
 }
 
-// Start begins periodic gossip.
 func (rg *RegistryGossip) Start(ctx context.Context) {
 	rg.gossip.Start(ctx)
 }
 
-// Stop terminates gossip.
 func (rg *RegistryGossip) Stop() {
 	rg.gossip.Stop()
 }
 
-// GossipProtocol returns the underlying gossip protocol for inbound routing.
 func (rg *RegistryGossip) GossipProtocol() *GossipProtocol {
 	return rg.gossip
 }
 
-// produce generates the gossip payload: a delta computed against an empty
-// digest (i.e. our full state). Peers merge what they're missing.
+// produce generates the gossip payload: only entries that changed since
+// the last round. This is O(delta) per round instead of O(N).
 func (rg *RegistryGossip) produce() []byte {
-	// Compute delta against empty digest — this gives us all our entries.
-	// Peers will ignore entries they already have (same tag).
-	delta := rg.registry.DeltaFor(crdt.Digest{})
+	rg.mu.Lock()
+	defer rg.mu.Unlock()
+
+	rg.roundCount++
+	currentDigest := rg.registry.Digest()
+
+	var delta crdt.StateDelta
+	if rg.roundCount%fullSyncEvery == 0 {
+		// Periodic full sync to catch peers that missed a diff round.
+		delta = rg.registry.DeltaFor(crdt.Digest{})
+	} else {
+		// Normal: only send what changed since last round.
+		delta = rg.registry.DeltaFor(rg.lastDigest)
+	}
+
+	rg.lastDigest = currentDigest
+
 	if len(delta.Entries) == 0 && len(delta.Tombstones) == 0 {
 		return nil
 	}

@@ -30,8 +30,7 @@ func (FullMeshTopology) Route(self, target NodeID, members []NodeMeta) (NodeID, 
 }
 
 // Responsible returns the nodes responsible for a key using consistent
-// hashing. Even in a full mesh, key ownership must be deterministic
-// so that PartitionedRegistry works correctly with any topology.
+// hashing. Key ownership is deterministic across all nodes.
 func (FullMeshTopology) Responsible(key string, members []NodeMeta, replication int) []NodeID {
 	if replication <= 0 {
 		replication = 1

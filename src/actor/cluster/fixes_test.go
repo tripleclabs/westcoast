@@ -119,26 +119,6 @@ func TestFix5_FullMesh_Responsible_Deterministic(t *testing.T) {
 	}
 }
 
-func TestFix5_PartitionedRegistry_WithFullMesh(t *testing.T) {
-	topo := FullMeshTopology{}
-	members := makeMembers("node-1", "node-2", "node-3")
-
-	// Two registries on different nodes should agree on the home node.
-	r1 := NewPartitionedRegistry("node-1", topo)
-	r1.SetMembers(members)
-	r2 := NewPartitionedRegistry("node-2", topo)
-	r2.SetMembers(members)
-
-	for i := 0; i < 50; i++ {
-		name := fmt.Sprintf("svc-%d", i)
-		h1 := r1.HomeNode(name)
-		h2 := r2.HomeNode(name)
-		if h1 != h2 {
-			t.Errorf("name %s: node-1 says %s, node-2 says %s", name, h1, h2)
-		}
-	}
-}
-
 // --- Fix #7: ClusterSupervisor phantom decisions ---
 
 func TestFix7_Supervisor_NoPhantomDecisions(t *testing.T) {
