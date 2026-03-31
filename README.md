@@ -35,6 +35,7 @@ Zero external dependencies. Single Go module.
 - **Distributed PubSub** (Phoenix.PubSub model): subscriptions stay local, publications broadcast to all nodes. `DirectPubSubAdapter` (fan-out to all) and `GossipPubSubAdapter` (epidemic gossip) included. No re-broadcast loops.
 - **Leader election**: `RingElection` — deterministic from membership (hash-based, no voting protocol). Scoped elections (multiple independent elections concurrently). Monotonically increasing terms for fencing.
 - **Cluster supervision**: user-space `ClusterSupervisor` that watches for node failures, uses leader election for single-decision-maker semantics, and delegates to a pluggable `ClusterSupervisionPolicy` for placement decisions. `SimpleRestartPolicy` included.
+- **Cluster router**: `ClusterRouter` provides distributed service groups. Workers on any node join a named service, and any node can route to the group using round-robin, random, or consistent-hash strategies. Worker lists replicate via CRDT gossip. No coordinator node — routing decisions are local.
 - **Singleton actors**: `SingletonManager` guarantees exactly one instance of an actor runs cluster-wide. Each singleton gets its own election scope — singletons distribute across nodes via consistent hashing (not all on the leader). On leadership change, the actor stops on the old node and starts on the new one.
 - **Distributed Ask**: `AskPID(ctx, pid, payload, timeout)` — request-response across nodes. The reply traverses the transport back via node-qualified `__ask_reply@nodeID` namespaces.
 - **Graceful drain**: `Drain(ctx, cluster, cfg, opts...)` — planned shutdown. Emits `MemberLeave` (vs `MemberFailed`), stops singletons so they migrate, deregisters names, waits for in-flight work, then stops transport.
@@ -191,6 +192,23 @@ c1.Start(context.Background())
 - `ClusterMembers()` — current membership
 - `PublishMembershipEvent(ctx, event)` — emits on `cluster.membership` topic
 - `AskPID(ctx, pid, payload, timeout)` — distributed request-response
+
+### Cluster Router (Distributed Services)
+
+```go
+cr := cluster.NewClusterRouter(rt, registry)
+cr.Configure("payment-processor", actor.RouterStrategyRoundRobin)
+
+// Workers on any node join the service group:
+cr.Join("payment-processor", workerPID)
+
+// Any node can route to the group:
+cr.Send(ctx, "payment-processor", payload)        // picks one worker
+cr.Ask(ctx, "payment-processor", payload, timeout) // request-response to one worker
+cr.Broadcast(ctx, "payment-processor", payload)    // sends to all workers
+cr.Members("payment-processor")                    // list all workers
+cr.Leave("payment-processor", workerPID)           // remove a worker
+```
 
 ### Singleton Actors
 
@@ -479,6 +497,21 @@ type PlacementDecision struct {
     TargetNode NodeID
     Action     PlacementAction // PlacementRestart or PlacementAbandon
 }
+```
+
+### ClusterRouter
+
+```go
+type ClusterRouter struct { ... }
+
+func NewClusterRouter(runtime *actor.Runtime, registry *CRDTRegistry) *ClusterRouter
+func (cr *ClusterRouter) Configure(serviceName string, strategy actor.RouterStrategy)
+func (cr *ClusterRouter) Join(serviceName string, pid actor.PID) error
+func (cr *ClusterRouter) Leave(serviceName string, pid actor.PID)
+func (cr *ClusterRouter) Members(serviceName string) []actor.PID
+func (cr *ClusterRouter) Send(ctx context.Context, serviceName string, payload any) actor.PIDSendAck
+func (cr *ClusterRouter) Ask(ctx context.Context, serviceName string, payload any, timeout time.Duration) (actor.AskResult, error)
+func (cr *ClusterRouter) Broadcast(ctx context.Context, serviceName string, payload any) []actor.PIDSendAck
 ```
 
 ### SingletonSpec
