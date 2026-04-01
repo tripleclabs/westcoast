@@ -21,6 +21,7 @@ type RingTopology struct {
 	VNodes int
 }
 
+// NewRingTopology creates a RingTopology with the given fanout and virtual node count, clamping both to at least 1.
 func NewRingTopology(fanout, vnodes int) *RingTopology {
 	if fanout < 1 {
 		fanout = 1

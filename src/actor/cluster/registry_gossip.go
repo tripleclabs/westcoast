@@ -46,6 +46,7 @@ type RegistryGossip struct {
 // peers that missed a diff round. Every N rounds, send full state.
 const fullSyncEvery = 10
 
+// NewRegistryGossip creates a RegistryGossip that synchronizes the given registry over the cluster's gossip protocol.
 func NewRegistryGossip(registry *CRDTRegistry, cluster *Cluster, codec Codec, cfg GossipConfig) *RegistryGossip {
 	rg := &RegistryGossip{
 		registry:   registry,
@@ -60,14 +61,17 @@ func NewRegistryGossip(registry *CRDTRegistry, cluster *Cluster, codec Codec, cf
 	return rg
 }
 
+// Start begins the gossip protocol for registry synchronization.
 func (rg *RegistryGossip) Start(ctx context.Context) {
 	rg.gossip.Start(ctx)
 }
 
+// Stop shuts down the gossip protocol for registry synchronization.
 func (rg *RegistryGossip) Stop() {
 	rg.gossip.Stop()
 }
 
+// GossipProtocol returns the underlying gossip protocol instance.
 func (rg *RegistryGossip) GossipProtocol() *GossipProtocol {
 	return rg.gossip
 }

@@ -15,7 +15,9 @@ type PubSubAdapter interface {
 	// The callback should dispatch to the local broker without re-broadcasting.
 	SetHandler(handler RemotePublishHandler)
 
+	// Start initializes the adapter and begins accepting broadcasts.
 	Start(ctx context.Context) error
+	// Stop shuts down the adapter and releases resources.
 	Stop() error
 }
 

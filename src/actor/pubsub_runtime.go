@@ -34,6 +34,7 @@ func (r *Runtime) emitBroker(brokerID string, op BrokerOperation, topicPattern s
 	})
 }
 
+// EnsureBrokerActor creates the pubsub broker actor if it does not already exist.
 func (r *Runtime) EnsureBrokerActor(brokerID string) (*ActorRef, error) {
 	if brokerID == "" {
 		brokerID = DefaultBrokerActorID
@@ -64,14 +65,17 @@ func (r *Runtime) EnsureBrokerActor(brokerID string) (*ActorRef, error) {
 	return ref, nil
 }
 
+// BrokerOutcomes returns the pubsub broker outcomes for a broker actor.
 func (r *Runtime) BrokerOutcomes(brokerID string) []BrokerOutcome {
 	return r.outcomes.brokerByID(brokerID)
 }
 
+// BrokerPublishedCount returns the number of messages published through a broker actor.
 func (r *Runtime) BrokerPublishedCount(brokerID string) int {
 	return r.outcomes.brokerPublishedCount(brokerID)
 }
 
+// BrokerSubscribe subscribes a PID to a topic pattern on the specified broker.
 func (r *Runtime) BrokerSubscribe(ctx context.Context, brokerID string, subscriber PID, pattern string, timeout time.Duration) (BrokerCommandAck, error) {
 	brokerID = defaultBrokerID(brokerID)
 	broker, err := r.EnsureBrokerActor(brokerID)
@@ -89,6 +93,7 @@ func (r *Runtime) BrokerSubscribe(ctx context.Context, brokerID string, subscrib
 	return ack, nil
 }
 
+// BrokerUnsubscribe removes a PID's subscription from a topic pattern on the specified broker.
 func (r *Runtime) BrokerUnsubscribe(ctx context.Context, brokerID string, subscriber PID, pattern string, timeout time.Duration) (BrokerCommandAck, error) {
 	brokerID = defaultBrokerID(brokerID)
 	broker, err := r.EnsureBrokerActor(brokerID)
@@ -106,6 +111,7 @@ func (r *Runtime) BrokerUnsubscribe(ctx context.Context, brokerID string, subscr
 	return ack, nil
 }
 
+// BrokerPublish publishes a message to a topic on the specified broker.
 func (r *Runtime) BrokerPublish(ctx context.Context, brokerID, topic string, payload any, publisherActorID string) SubmitAck {
 	brokerID = defaultBrokerID(brokerID)
 	broker, err := r.EnsureBrokerActor(brokerID)

@@ -5,6 +5,7 @@ import (
 	"time"
 )
 
+// PIDResolverEntry holds the routing state for a registered PID.
 type PIDResolverEntry struct {
 	PID               PID
 	RouteState        PIDRouteState
@@ -12,6 +13,7 @@ type PIDResolverEntry struct {
 	UpdatedAt         time.Time
 }
 
+// PIDResolver maps PIDs to their current routing state and generation.
 type PIDResolver interface {
 	Register(pid PID)
 	Resolve(pid PID) (PIDResolverEntry, bool)
@@ -23,6 +25,7 @@ type PIDResolver interface {
 	GatewayAvailable() bool
 }
 
+// InMemoryPIDResolver is a PIDResolver backed by an in-memory map.
 type InMemoryPIDResolver struct {
 	mu    sync.RWMutex
 	byKey map[string]PIDResolverEntry
@@ -31,6 +34,7 @@ type InMemoryPIDResolver struct {
 	gwUp  bool
 }
 
+// NewInMemoryPIDResolver creates a new InMemoryPIDResolver with local-direct gateway mode.
 func NewInMemoryPIDResolver() *InMemoryPIDResolver {
 	return &InMemoryPIDResolver{
 		byKey: map[string]PIDResolverEntry{},
@@ -40,12 +44,14 @@ func NewInMemoryPIDResolver() *InMemoryPIDResolver {
 	}
 }
 
+// Register adds a PID to the resolver as reachable.
 func (r *InMemoryPIDResolver) Register(pid PID) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.byKey[pid.Key()] = PIDResolverEntry{PID: pid, RouteState: PIDRouteReachable, CurrentGeneration: pid.Generation, UpdatedAt: r.now()}
 }
 
+// Resolve looks up a PID and returns its routing entry.
 func (r *InMemoryPIDResolver) Resolve(pid PID) (PIDResolverEntry, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -53,6 +59,7 @@ func (r *InMemoryPIDResolver) Resolve(pid PID) (PIDResolverEntry, bool) {
 	return entry, ok
 }
 
+// SetState updates the routing state for a PID.
 func (r *InMemoryPIDResolver) SetState(pid PID, state PIDRouteState) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -65,6 +72,7 @@ func (r *InMemoryPIDResolver) SetState(pid PID, state PIDRouteState) {
 	r.byKey[pid.Key()] = entry
 }
 
+// BumpGeneration increments the PID's generation and resets its state to reachable.
 func (r *InMemoryPIDResolver) BumpGeneration(pid PID) (PID, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -80,24 +88,28 @@ func (r *InMemoryPIDResolver) BumpGeneration(pid PID) (PID, bool) {
 	return entry.PID, true
 }
 
+// SetGatewayMode sets the gateway routing mode for PID resolution.
 func (r *InMemoryPIDResolver) SetGatewayMode(mode GatewayRouteMode) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.mode = mode
 }
 
+// GatewayMode returns the current gateway routing mode.
 func (r *InMemoryPIDResolver) GatewayMode() GatewayRouteMode {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return r.mode
 }
 
+// SetGatewayAvailability sets whether the gateway is available for mediated routing.
 func (r *InMemoryPIDResolver) SetGatewayAvailability(available bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.gwUp = available
 }
 
+// GatewayAvailable returns whether the gateway is available for mediated routing.
 func (r *InMemoryPIDResolver) GatewayAvailable() bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()

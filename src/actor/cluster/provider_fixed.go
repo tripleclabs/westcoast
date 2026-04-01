@@ -45,6 +45,7 @@ type fixedPeerState struct {
 	lastSeen         time.Time
 }
 
+// NewFixedProvider creates a new FixedProvider with the given configuration.
 func NewFixedProvider(cfg FixedProviderConfig) *FixedProvider {
 	if cfg.HeartbeatInterval == 0 {
 		cfg.HeartbeatInterval = 5 * time.Second
@@ -59,6 +60,7 @@ func NewFixedProvider(cfg FixedProviderConfig) *FixedProvider {
 	}
 }
 
+// Start begins periodic heartbeat probing of the seed list.
 func (p *FixedProvider) Start(self NodeMeta) error {
 	p.mu.Lock()
 	if p.started {
@@ -75,6 +77,7 @@ func (p *FixedProvider) Start(self NodeMeta) error {
 	return nil
 }
 
+// Stop terminates heartbeating and closes the event channel.
 func (p *FixedProvider) Stop() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -87,6 +90,7 @@ func (p *FixedProvider) Stop() error {
 	return nil
 }
 
+// Members returns all currently alive peers.
 func (p *FixedProvider) Members() []NodeMeta {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
@@ -99,6 +103,7 @@ func (p *FixedProvider) Members() []NodeMeta {
 	return out
 }
 
+// Events returns the channel that emits membership changes.
 func (p *FixedProvider) Events() <-chan MemberEvent {
 	return p.eventCh
 }

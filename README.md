@@ -19,6 +19,9 @@ Zero external dependencies. Single Go module.
 - **Supervision**: pluggable `SupervisorPolicy` interface. `DefaultSupervisor` with configurable restart limit. Mailbox preserved across restarts.
 - **Lifecycle hooks**: `Start` and `Stop` hooks with configurable timeouts. Panic-safe (defer/recover).
 - **PubSub broker**: built-in broker actor with MQTT-style wildcard routing (`+` single-segment, `#` tail wildcard). Ask-based subscribe/unsubscribe. Async publish fan-out.
+- **Timers**: `SendAfter(pid, payload, delay)` and `SendInterval(pid, payload, interval)`. Returns `TimerRef` for cancellation. Works with both local and remote PIDs.
+- **Actor monitors**: `Monitor(watcher, target)` — watcher receives a `DownMessage` when the target stops (for any reason: explicit stop, supervision decision, crash). `Demonitor` to cancel. Works cross-node.
+- **Dead letters**: undeliverable messages routed to a configurable `DeadLetterHandler`. Every PID rejection (not found, stopped, stale generation) emits a `DeadLetter` with the original payload, target, and reason. Counter available via `DeadLetterCount()`.
 - **Observability**: event emitter interface, outcome journal (processing, lifecycle, ask, routing, batch, broker outcomes), pluggable metrics hooks.
 - **Guardrails**: PID-only cross-actor policy mode, gateway route modes, distributed readiness validation.
 
@@ -146,7 +149,7 @@ c1.Start(context.Background())
 ### Runtime Creation
 
 - `NewRuntime(opts...)` — creates a runtime. Options:
-  - `WithSupervisor(policy)`, `WithEmitter(e)`, `WithMetrics(h)`
+  - `WithSupervisor(policy)`, `WithEmitter(e)`, `WithMetrics(h)`, `WithDeadLetterHandler(fn)`
   - `WithNodeID(id)` — sets the local node identity for cluster operation
   - `WithRemoteSend(fn)`, `WithRemoteAskSend(fn)` — injects remote transport
   - `WithPubSubBroadcast(fn)` — injects cross-node pubsub broadcast
@@ -177,6 +180,25 @@ c1.Start(context.Background())
 - `LookupName` falls back to cluster registry when local miss
 - `SendName(ctx, name, payload)` — lookup + send in one call (local or remote)
 - `AskName(ctx, name, payload, timeout)` — lookup + ask in one call (local or remote)
+
+### Timers
+
+- `SendAfter(target PID, payload, delay)` → `*TimerRef`
+- `SendInterval(target PID, payload, interval)` → `*TimerRef`
+- `TimerRef.Cancel()` — stops the timer
+- `CancelTimer(ref)` — convenience alias
+
+### Monitors
+
+- `Monitor(watcher PID, target PID)` → `MonitorRef`
+- `Demonitor(ref MonitorRef)` — cancel a monitor
+- Target stops → watcher receives `DownMessage{Ref, Target, Reason}`
+
+### Dead Letters
+
+- `WithDeadLetterHandler(fn)` — set handler on runtime creation
+- `DeadLetterCount()` — total undeliverable messages since startup
+- `DeadLetter{TargetActorID, TargetPID, Payload, Reason, Timestamp}`
 
 ### PubSub
 

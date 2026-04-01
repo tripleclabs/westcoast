@@ -16,6 +16,7 @@ type RemoteSender struct {
 	metrics metrics.Hooks
 }
 
+// NewRemoteSender creates a RemoteSender that uses the given cluster, codec, and metrics hooks.
 func NewRemoteSender(cluster *Cluster, codec Codec, m metrics.Hooks) *RemoteSender {
 	if m == nil {
 		m = metrics.NopHooks{}

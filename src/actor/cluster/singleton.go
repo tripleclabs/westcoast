@@ -36,6 +36,7 @@ type singletonState struct {
 	running bool
 }
 
+// NewSingletonManager creates a SingletonManager that uses the given runtime, election, and registry.
 func NewSingletonManager(runtime *actor.Runtime, election LeaderElection, registry *CRDTRegistry) *SingletonManager {
 	return &SingletonManager{
 		runtime:    runtime,

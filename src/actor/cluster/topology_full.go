@@ -10,6 +10,7 @@ import (
 // topology and works well for small clusters (< ~20 nodes).
 type FullMeshTopology struct{}
 
+// ShouldConnect returns all other members, since full mesh connects every node to every other node.
 func (FullMeshTopology) ShouldConnect(self NodeID, members []NodeMeta) []NodeID {
 	out := make([]NodeID, 0, len(members))
 	for _, m := range members {
@@ -20,6 +21,7 @@ func (FullMeshTopology) ShouldConnect(self NodeID, members []NodeMeta) []NodeID 
 	return out
 }
 
+// Route returns the target directly if it exists in the membership, since full mesh has single-hop routing.
 func (FullMeshTopology) Route(self, target NodeID, members []NodeMeta) (NodeID, bool) {
 	for _, m := range members {
 		if m.ID == target {

@@ -54,6 +54,7 @@ type GossipConfig struct {
 	OnReceive func(from NodeID, data []byte)
 }
 
+// NewGossipProtocol creates a new gossip protocol instance with the given configuration.
 func NewGossipProtocol(cluster *Cluster, codec Codec, cfg GossipConfig) *GossipProtocol {
 	if cfg.Interval == 0 {
 		cfg.Interval = 1 * time.Second

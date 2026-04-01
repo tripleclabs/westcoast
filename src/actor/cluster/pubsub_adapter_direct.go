@@ -35,6 +35,7 @@ type DirectPubSubAdapter struct {
 	handler RemotePublishHandler
 }
 
+// NewDirectPubSubAdapter creates a new adapter that broadcasts via direct sends to all peers.
 func NewDirectPubSubAdapter(cluster *Cluster, codec Codec) *DirectPubSubAdapter {
 	return &DirectPubSubAdapter{
 		cluster: cluster,
@@ -42,6 +43,7 @@ func NewDirectPubSubAdapter(cluster *Cluster, codec Codec) *DirectPubSubAdapter 
 	}
 }
 
+// Broadcast sends a publication to every other node in the cluster via direct sends.
 func (a *DirectPubSubAdapter) Broadcast(ctx context.Context, topic string, payload any, publisherNode NodeID) error {
 	payloadBytes, err := a.codec.Encode(payload)
 	if err != nil {
@@ -72,6 +74,7 @@ func (a *DirectPubSubAdapter) Broadcast(ctx context.Context, topic string, paylo
 	return nil
 }
 
+// SetHandler registers the callback for incoming remote publications.
 func (a *DirectPubSubAdapter) SetHandler(handler RemotePublishHandler) {
 	a.handler = handler
 }
@@ -97,8 +100,11 @@ func (a *DirectPubSubAdapter) HandleInbound(env Envelope) {
 	a.handler(msg.Topic, payload, msg.PublisherNode)
 }
 
+// Start is a no-op for the direct adapter since it uses on-demand sends.
 func (a *DirectPubSubAdapter) Start(ctx context.Context) error { return nil }
-func (a *DirectPubSubAdapter) Stop() error                     { return nil }
+
+// Stop is a no-op for the direct adapter.
+func (a *DirectPubSubAdapter) Stop() error { return nil }
 
 // RegisterPubSubHandler registers a direct pubsub adapter with an
 // InboundDispatcher so that pubsub broadcast envelopes are routed automatically.

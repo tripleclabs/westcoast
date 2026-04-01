@@ -12,8 +12,10 @@ import (
 	"github.com/tripleclabs/westcoast/src/internal/metrics"
 )
 
+// RuntimeOption configures a Runtime during construction via NewRuntime.
 type RuntimeOption func(*Runtime)
 
+// ActorOption configures an actor during creation via CreateActor.
 type ActorOption func(*actorConfig)
 
 type actorConfig struct {
@@ -42,6 +44,8 @@ type actorInstance struct {
 	mu           sync.RWMutex
 }
 
+// Runtime is the central actor system that manages actor lifecycles, message delivery,
+// supervision, routing, and cluster integration.
 type Runtime struct {
 	registry  *actorRegistry
 	names     *namedRegistry
@@ -140,14 +144,17 @@ type ClusterMembershipEvent struct {
 	Member ClusterMemberInfo
 }
 
+// WithEmitter sets the event emitter for runtime observability.
 func WithEmitter(e EventEmitter) RuntimeOption {
 	return func(r *Runtime) { r.emitter = e }
 }
 
+// WithSupervisor sets the supervision policy for all actors in the runtime.
 func WithSupervisor(p SupervisorPolicy) RuntimeOption {
 	return func(r *Runtime) { r.policy = p }
 }
 
+// WithMetrics sets the metrics hooks for runtime instrumentation.
 func WithMetrics(h metrics.Hooks) RuntimeOption {
 	return func(r *Runtime) { r.metrics = h }
 }
@@ -223,6 +230,7 @@ func WithClusterRegistry(
 	}
 }
 
+// NewRuntime creates a new actor runtime with the given options.
 func NewRuntime(opts ...RuntimeOption) *Runtime {
 	r := &Runtime{
 		registry:  newRegistry(),
@@ -252,22 +260,27 @@ func NewRuntime(opts ...RuntimeOption) *Runtime {
 	return r
 }
 
+// WithMailboxCapacity sets the maximum number of messages an actor's mailbox can hold.
 func WithMailboxCapacity(capacity int) ActorOption {
 	return func(c *actorConfig) { c.mailboxCapacity = capacity }
 }
 
+// WithStartHook sets a hook to run when the actor starts.
 func WithStartHook(h LifecycleHook) ActorOption {
 	return func(c *actorConfig) { c.startHook = h }
 }
 
+// WithStopHook sets a hook to run when the actor stops.
 func WithStopHook(h LifecycleHook) ActorOption {
 	return func(c *actorConfig) { c.stopHook = h }
 }
 
+// WithStopHookTimeout sets the maximum duration the stop hook may run before being canceled.
 func WithStopHookTimeout(d time.Duration) ActorOption {
 	return func(c *actorConfig) { c.stopHookTimeout = d }
 }
 
+// WithBatching enables batch message processing for the actor at creation time.
 func WithBatching(maxBatchSize int, receiver BatchReceive) ActorOption {
 	return func(c *actorConfig) {
 		c.batch.Enabled = true
@@ -276,6 +289,7 @@ func WithBatching(maxBatchSize int, receiver BatchReceive) ActorOption {
 	}
 }
 
+// CreateActor creates and starts a new actor with the given ID, initial state, and handler.
 func (r *Runtime) CreateActor(id string, initialState any, handler Handler, opts ...ActorOption) (*ActorRef, error) {
 	if id == "" {
 		return nil, fmt.Errorf("empty actor id")
@@ -871,6 +885,7 @@ func (r *Runtime) processMessage(inst *actorInstance, msg Message) {
 	r.emitLocal(EventMessageProcessed, inst.id, msg, string(ResultDelivered), "")
 }
 
+// ConfigureBatching enables batch processing for an existing actor.
 func (r *Runtime) ConfigureBatching(actorID string, maxBatchSize int, receiver BatchReceive) error {
 	inst, ok := r.registry.get(actorID)
 	if !ok {
@@ -888,6 +903,7 @@ func (r *Runtime) ConfigureBatching(actorID string, maxBatchSize int, receiver B
 	return nil
 }
 
+// DisableBatching turns off batch processing for an actor.
 func (r *Runtime) DisableBatching(actorID string) error {
 	inst, ok := r.registry.get(actorID)
 	if !ok {
@@ -900,10 +916,12 @@ func (r *Runtime) DisableBatching(actorID string) error {
 	return nil
 }
 
+// BatchOutcomes returns the batch processing outcomes for an actor.
 func (r *Runtime) BatchOutcomes(actorID string) []BatchOutcome {
 	return r.outcomes.batchByActor(actorID)
 }
 
+// ConfigureRouter sets up an actor as a message router with the given strategy and workers.
 func (r *Runtime) ConfigureRouter(routerID string, strategy RouterStrategy, workers []string) error {
 	if _, ok := r.registry.get(routerID); !ok {
 		return ErrActorNotFound
@@ -938,10 +956,12 @@ func (r *Runtime) ConfigureRouter(routerID string, strategy RouterStrategy, work
 	return nil
 }
 
+// RoutingOutcomes returns the routing outcomes for a router actor.
 func (r *Runtime) RoutingOutcomes(routerID string) []RoutingOutcome {
 	return r.outcomes.routingByRouter(routerID)
 }
 
+// Route sends a message through a router actor to a selected worker.
 func (r *Runtime) Route(ctx context.Context, routerID string, payload any) SubmitAck {
 	return r.sendWithAskContext(ctx, routerID, payload, nil)
 }
@@ -1004,6 +1024,7 @@ func (r *Runtime) dispatchRouted(ctx context.Context, routerID string, payload a
 	return ack
 }
 
+// Send delivers a message to an actor by actor ID.
 func (r *Runtime) Send(ctx context.Context, actorID string, payload any) SubmitAck {
 	return r.sendWithAskContext(ctx, actorID, payload, nil)
 }
@@ -1138,6 +1159,7 @@ func (r *Runtime) completeAskRequest(wait pendingAsk) {
 	r.askMu.Unlock()
 }
 
+// Ask sends a request to an actor and waits for a reply within the given timeout.
 func (r *Runtime) Ask(ctx context.Context, actorID string, payload any, timeout time.Duration) (AskResult, error) {
 	if timeout <= 0 {
 		return AskResult{}, ErrAskInvalidTimeout
@@ -1303,6 +1325,7 @@ func (r *Runtime) AskName(ctx context.Context, name string, payload any, timeout
 	return r.AskPID(ctx, ack.PID, payload, timeout)
 }
 
+// RegisterTypeRoute registers an exact type-based message routing rule for an actor.
 func (r *Runtime) RegisterTypeRoute(actorID, typeName, schemaVersion, handlerKey string) error {
 	if _, ok := r.registry.get(actorID); !ok {
 		return ErrActorNotFound
@@ -1311,6 +1334,7 @@ func (r *Runtime) RegisterTypeRoute(actorID, typeName, schemaVersion, handlerKey
 	return nil
 }
 
+// RegisterFallbackRoute registers a fallback routing rule for unmatched message types.
 func (r *Runtime) RegisterFallbackRoute(actorID, handlerKey string) error {
 	if _, ok := r.registry.get(actorID); !ok {
 		return ErrActorNotFound
@@ -1319,6 +1343,7 @@ func (r *Runtime) RegisterFallbackRoute(actorID, handlerKey string) error {
 	return nil
 }
 
+// Stop terminates an actor, running its stop hook and cleaning up resources.
 func (r *Runtime) Stop(actorID string) StopResult {
 	inst, ok := r.registry.get(actorID)
 	if !ok {
@@ -1349,6 +1374,7 @@ func (r *Runtime) cleanupRegistryForActor(actorID string, result RegistryOperati
 	r.notifyMonitors(actorID, "stopped")
 }
 
+// Status returns the current lifecycle status of an actor.
 func (r *Runtime) Status(actorID string) ActorStatus {
 	inst, ok := r.registry.get(actorID)
 	if !ok {
@@ -1369,6 +1395,7 @@ func (r *Runtime) Status(actorID string) ActorStatus {
 	}
 }
 
+// ActorRef returns a handle to an existing actor, or ErrActorNotFound.
 func (r *Runtime) ActorRef(actorID string) (*ActorRef, error) {
 	if _, ok := r.registry.get(actorID); !ok {
 		return nil, ErrActorNotFound
@@ -1376,14 +1403,17 @@ func (r *Runtime) ActorRef(actorID string) (*ActorRef, error) {
 	return &ActorRef{runtime: r, actorID: actorID}, nil
 }
 
+// Outcome returns the processing outcome for a message by ID.
 func (r *Runtime) Outcome(messageID uint64) (ProcessingOutcome, bool) {
 	return r.outcomes.get(messageID)
 }
 
+// LifecycleOutcomes returns the lifecycle hook outcomes for an actor.
 func (r *Runtime) LifecycleOutcomes(actorID string) []LifecycleHookOutcome {
 	return r.outcomes.lifecycleByActor(actorID)
 }
 
+// IssuePID creates and registers a PID for an actor in the given namespace.
 func (r *Runtime) IssuePID(namespace, actorID string) (PID, error) {
 	if _, ok := r.registry.get(actorID); !ok {
 		return PID{}, ErrActorNotFound
@@ -1401,6 +1431,7 @@ func (r *Runtime) IssuePID(namespace, actorID string) (PID, error) {
 	return pid, nil
 }
 
+// PIDForActor returns the PID associated with an actor, or false if none has been issued.
 func (r *Runtime) PIDForActor(actorID string) (PID, bool) {
 	v, ok := r.actorPID.Load(actorID)
 	if !ok {
@@ -1409,6 +1440,7 @@ func (r *Runtime) PIDForActor(actorID string) (PID, bool) {
 	return v.(PID), true
 }
 
+// ResolvePID looks up a PID in the resolver and emits resolution events.
 func (r *Runtime) ResolvePID(pid PID) (PIDResolverEntry, bool) {
 	start := r.now()
 	entry, ok := r.resolver.Resolve(pid)
@@ -1421,6 +1453,7 @@ func (r *Runtime) ResolvePID(pid PID) (PIDResolverEntry, bool) {
 	return entry, true
 }
 
+// SendPID delivers a message to an actor addressed by PID.
 func (r *Runtime) SendPID(ctx context.Context, pid PID, payload any) PIDSendAck {
 	return r.sendPIDWithSender(ctx, "", pid, payload)
 }
@@ -1495,6 +1528,8 @@ func (r *Runtime) sendPIDWithSender(ctx context.Context, senderActorID string, p
 	return PIDSendAck{Outcome: PIDDelivered, MessageID: ack.MessageID}
 }
 
+// CrossActorSendByActorID sends a message from one actor to another by actor ID,
+// subject to PID interaction policy enforcement.
 func (r *Runtime) CrossActorSendByActorID(ctx context.Context, senderActorID, targetActorID string, payload any) SubmitAck {
 	if r.PIDInteractionPolicy() == PIDInteractionPolicyPIDOnly && senderActorID != "" && senderActorID != targetActorID {
 		msgID := r.msgSeq.Add(1)
@@ -1512,6 +1547,7 @@ func (r *Runtime) CrossActorSendByActorID(ctx context.Context, senderActorID, ta
 	return r.Send(ctx, targetActorID, payload)
 }
 
+// CrossActorSendPID sends a message from one actor to another by PID.
 func (r *Runtime) CrossActorSendPID(ctx context.Context, senderActorID string, target PID, payload any) PIDSendAck {
 	if r.PIDInteractionPolicy() == PIDInteractionPolicyPIDOnly {
 		r.emitGuardrail(senderActorID, r.resolver.GatewayMode(), GuardrailPolicyAccept, "")
@@ -1519,34 +1555,41 @@ func (r *Runtime) CrossActorSendPID(ctx context.Context, senderActorID string, t
 	return r.sendPIDWithSender(ctx, senderActorID, target, payload)
 }
 
+// SetPIDInteractionPolicy sets the cross-actor interaction policy for the runtime.
 func (r *Runtime) SetPIDInteractionPolicy(mode PIDInteractionPolicyMode) {
 	r.policyMu.Lock()
 	defer r.policyMu.Unlock()
 	r.pidPolicy = mode
 }
 
+// PIDInteractionPolicy returns the current cross-actor interaction policy.
 func (r *Runtime) PIDInteractionPolicy() PIDInteractionPolicyMode {
 	r.policyMu.RLock()
 	defer r.policyMu.RUnlock()
 	return r.pidPolicy
 }
 
+// SetGatewayRouteMode sets the gateway routing mode for PID resolution.
 func (r *Runtime) SetGatewayRouteMode(mode GatewayRouteMode) {
 	r.resolver.SetGatewayMode(mode)
 }
 
+// SetGatewayAvailable sets whether the gateway is available for mediated routing.
 func (r *Runtime) SetGatewayAvailable(available bool) {
 	r.resolver.SetGatewayAvailability(available)
 }
 
+// GuardrailOutcomes returns the guardrail policy outcomes for an actor.
 func (r *Runtime) GuardrailOutcomes(actorID string) []GuardrailOutcome {
 	return r.outcomes.guardrailByActor(actorID)
 }
 
+// AskOutcomes returns the ask interaction outcomes for an actor.
 func (r *Runtime) AskOutcomes(actorID string) []AskOutcome {
 	return r.outcomes.askByActor(actorID)
 }
 
+// ValidateDistributedReadiness runs all distributed readiness checks and returns the results.
 func (r *Runtime) ValidateDistributedReadiness() []ReadinessValidationRecord {
 	mode := r.PIDInteractionPolicy()
 	if mode == PIDInteractionPolicyPIDOnly {
@@ -1563,6 +1606,7 @@ func (r *Runtime) ValidateDistributedReadiness() []ReadinessValidationRecord {
 	return r.outcomes.readinessAll()
 }
 
+// RegisterName registers a human-readable name for an actor, issuing a PID if needed.
 func (r *Runtime) RegisterName(actorID, name, namespace string) (RegistryRegisterAck, error) {
 	if _, ok := r.registry.get(actorID); !ok {
 		return RegistryRegisterAck{Result: RegistryRegisterRejectedDup, Name: name}, ErrActorNotFound
@@ -1599,6 +1643,7 @@ func (r *Runtime) RegisterName(actorID, name, namespace string) (RegistryRegiste
 	return RegistryRegisterAck{Result: RegistryRegisterSuccess, Name: entry.name, PID: entry.pid}, nil
 }
 
+// LookupName resolves a registered name to a PID, falling back to the cluster registry.
 func (r *Runtime) LookupName(name string) RegistryLookupAck {
 	start := r.now()
 	entry, ok := r.names.lookup(name)
@@ -1621,6 +1666,7 @@ func (r *Runtime) LookupName(name string) RegistryLookupAck {
 	return RegistryLookupAck{Result: RegistryLookupHit, Name: entry.name, PID: entry.pid}
 }
 
+// UnregisterName removes a name registration and propagates to the cluster registry.
 func (r *Runtime) UnregisterName(name string) RegistryLookupAck {
 	entry, ok := r.names.unregister(name)
 	if !ok {

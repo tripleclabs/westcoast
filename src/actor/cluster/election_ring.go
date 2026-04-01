@@ -27,6 +27,7 @@ type electionScope struct {
 	watchers []chan LeaderEvent
 }
 
+// NewRingElection creates a new RingElection for the given local node.
 func NewRingElection(localID NodeID) *RingElection {
 	return &RingElection{
 		localID: localID,
@@ -35,6 +36,7 @@ func NewRingElection(localID NodeID) *RingElection {
 	}
 }
 
+// Leader returns the current leader for the scope, or ("", false) if none.
 func (e *RingElection) Leader(scope string) (NodeID, bool) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -42,11 +44,13 @@ func (e *RingElection) Leader(scope string) (NodeID, bool) {
 	return s.leader, s.leader != ""
 }
 
+// IsLeader returns true if this node is the leader for the scope.
 func (e *RingElection) IsLeader(scope string) bool {
 	leader, ok := e.Leader(scope)
 	return ok && leader == e.localID
 }
 
+// Term returns the current election term for the scope.
 func (e *RingElection) Term(scope string) uint64 {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
@@ -57,6 +61,7 @@ func (e *RingElection) Term(scope string) uint64 {
 	return s.term
 }
 
+// Watch returns a channel that emits leadership changes for the scope.
 func (e *RingElection) Watch(scope string) <-chan LeaderEvent {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -76,6 +81,7 @@ func (e *RingElection) Watch(scope string) <-chan LeaderEvent {
 	return ch
 }
 
+// OnMembershipChange updates the member set and recomputes leaders for all active scopes.
 func (e *RingElection) OnMembershipChange(event MemberEvent) {
 	e.mu.Lock()
 	defer e.mu.Unlock()

@@ -6,6 +6,7 @@ import (
 )
 
 var (
+	// ErrAuthRejected is returned when a peer's credentials fail verification.
 	ErrAuthRejected = errors.New("cluster_auth_rejected")
 )
 
@@ -30,18 +31,21 @@ type SharedSecretAuth struct {
 	Secret []byte
 }
 
+// NewSharedSecretAuth returns a SharedSecretAuth that authenticates using the given secret.
 func NewSharedSecretAuth(secret []byte) *SharedSecretAuth {
 	s := make([]byte, len(secret))
 	copy(s, secret)
 	return &SharedSecretAuth{Secret: s}
 }
 
+// Credentials returns a copy of the shared secret as the auth payload.
 func (a *SharedSecretAuth) Credentials() ([]byte, error) {
 	out := make([]byte, len(a.Secret))
 	copy(out, a.Secret)
 	return out, nil
 }
 
+// Verify checks that the peer's credentials match the shared secret using constant-time comparison.
 func (a *SharedSecretAuth) Verify(peerCredentials []byte) error {
 	if subtle.ConstantTimeCompare(a.Secret, peerCredentials) != 1 {
 		return ErrAuthRejected

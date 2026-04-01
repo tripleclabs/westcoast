@@ -36,6 +36,7 @@ type GossipPubSubAdapter struct {
 	pending []pubsubGossipPayload
 }
 
+// NewGossipPubSubAdapter creates a new adapter that broadcasts publications via gossip.
 func NewGossipPubSubAdapter(cluster *Cluster, codec Codec, cfg GossipConfig) *GossipPubSubAdapter {
 	a := &GossipPubSubAdapter{
 		cluster: cluster,
@@ -50,6 +51,7 @@ func NewGossipPubSubAdapter(cluster *Cluster, codec Codec, cfg GossipConfig) *Go
 	return a
 }
 
+// Broadcast enqueues a publication for the next gossip round.
 func (a *GossipPubSubAdapter) Broadcast(ctx context.Context, topic string, payload any, publisherNode NodeID) error {
 	encoded, err := a.codec.Encode(payload)
 	if err != nil {
@@ -69,15 +71,18 @@ func (a *GossipPubSubAdapter) Broadcast(ctx context.Context, topic string, paylo
 	return nil
 }
 
+// SetHandler registers the callback for incoming remote publications received via gossip.
 func (a *GossipPubSubAdapter) SetHandler(handler RemotePublishHandler) {
 	a.handler = handler
 }
 
+// Start begins the gossip protocol for pubsub broadcast.
 func (a *GossipPubSubAdapter) Start(ctx context.Context) error {
 	a.gossip.Start(ctx)
 	return nil
 }
 
+// Stop shuts down the gossip protocol and releases resources.
 func (a *GossipPubSubAdapter) Stop() error {
 	a.gossip.Stop()
 	return nil

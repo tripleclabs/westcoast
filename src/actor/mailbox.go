@@ -2,6 +2,7 @@ package actor
 
 import "sync"
 
+// Mailbox is a bounded, thread-safe FIFO message queue for an actor.
 type Mailbox struct {
 	mu     sync.Mutex
 	queue  []Message
@@ -11,6 +12,7 @@ type Mailbox struct {
 	closed bool
 }
 
+// NewMailbox creates a Mailbox with the given maximum capacity.
 func NewMailbox(capacity int) *Mailbox {
 	if capacity <= 0 {
 		capacity = 16
@@ -26,6 +28,8 @@ func NewMailbox(capacity int) *Mailbox {
 	}
 }
 
+// Enqueue adds a message to the mailbox. Returns SubmitRejectedFull if at capacity
+// or SubmitRejectedStop if the mailbox is closed.
 func (m *Mailbox) Enqueue(msg Message) SubmitResult {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -48,8 +52,10 @@ func (m *Mailbox) Enqueue(msg Message) SubmitResult {
 	return SubmitAccepted
 }
 
+// Notify returns a channel that receives a signal when messages are available.
 func (m *Mailbox) Notify() <-chan struct{} { return m.notify }
 
+// Dequeue removes and returns the next message from the mailbox, or false if empty.
 func (m *Mailbox) Dequeue() (Message, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -77,6 +83,7 @@ func (m *Mailbox) Dequeue() (Message, bool) {
 	return msg, true
 }
 
+// DequeueBatch removes and returns up to limit messages from the mailbox.
 func (m *Mailbox) DequeueBatch(limit int) []Message {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -114,12 +121,14 @@ func (m *Mailbox) DequeueBatch(limit int) []Message {
 	return out
 }
 
+// Depth returns the number of messages currently in the mailbox.
 func (m *Mailbox) Depth() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return len(m.queue) - m.head
 }
 
+// Close marks the mailbox as closed, causing future Enqueue calls to return SubmitRejectedStop.
 func (m *Mailbox) Close() {
 	m.mu.Lock()
 	m.closed = true

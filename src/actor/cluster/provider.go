@@ -3,7 +3,9 @@ package cluster
 import "errors"
 
 var (
+	// ErrProviderAlreadyStarted is returned when Start is called on a running provider.
 	ErrProviderAlreadyStarted = errors.New("provider_already_started")
+	// ErrProviderNotStarted is returned when Stop is called on a provider that was never started.
 	ErrProviderNotStarted     = errors.New("provider_not_started")
 )
 
@@ -17,6 +19,7 @@ const (
 	MemberUpdated                        // A node's metadata has changed.
 )
 
+// String returns a human-readable name for the event type.
 func (t MemberEventType) String() string {
 	switch t {
 	case MemberJoin:

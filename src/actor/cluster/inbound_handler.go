@@ -39,6 +39,7 @@ type InboundDispatcher struct {
 	handlers map[string]SystemEnvelopeHandler // TypeName → handler
 }
 
+// NewInboundDispatcher creates a dispatcher that routes inbound envelopes to the given bridge.
 func NewInboundDispatcher(bridge RuntimeBridge, codec Codec) *InboundDispatcher {
 	return &InboundDispatcher{
 		bridge:   bridge,

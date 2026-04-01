@@ -46,6 +46,7 @@ type Cluster struct {
 	started bool
 }
 
+// NewCluster creates a new cluster node with the given configuration.
 func NewCluster(cfg ClusterConfig) (*Cluster, error) {
 	if cfg.Self.ID == "" {
 		return nil, fmt.Errorf("cluster: Self.ID is required")
@@ -247,12 +248,15 @@ func (c *Cluster) IsConnected(target NodeID) bool {
 
 // --- InboundHandler implementation ---
 
+// OnEnvelope implements InboundHandler by forwarding envelopes to the configured callback.
 func (c *Cluster) OnEnvelope(from NodeID, env Envelope) {
 	if c.cfg.OnEnvelope != nil {
 		c.cfg.OnEnvelope(from, env)
 	}
 }
 
+// OnConnectionEstablished implements InboundHandler. Inbound connections are not stored
+// since the transport delivers envelopes directly via OnEnvelope.
 func (c *Cluster) OnConnectionEstablished(remote NodeID, conn Connection) {
 	// Inbound connections are used for receiving only.
 	// Outbound connections (from dialPeer) are used for sending.
@@ -260,6 +264,8 @@ func (c *Cluster) OnConnectionEstablished(remote NodeID, conn Connection) {
 	// delivers envelopes directly via OnEnvelope.
 }
 
+// OnConnectionLost implements InboundHandler. Connection loss is handled lazily
+// when SendRemote fails, so this callback does not proactively remove connections.
 func (c *Cluster) OnConnectionLost(remote NodeID, err error) {
 	// Connection loss is handled lazily: when SendRemote fails,
 	// it removes the dead connection and the next send retries.

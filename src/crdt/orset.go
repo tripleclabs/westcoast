@@ -47,12 +47,14 @@ type ORSet struct {
 	TombstoneTTL time.Duration
 }
 
+// ORSetConfig holds the configuration for creating a new ORSet.
 type ORSetConfig struct {
 	NodeID       string
 	TombstoneTTL time.Duration
 	Now          func() time.Time
 }
 
+// NewORSet creates a new ORSet with the given configuration.
 func NewORSet(cfg ORSetConfig) *ORSet {
 	if cfg.TombstoneTTL == 0 {
 		cfg.TombstoneTTL = 5 * time.Minute
@@ -217,9 +219,11 @@ func (s *ORSet) Digest() Digest {
 	return d
 }
 
-// StateDelta contains what a peer needs to converge.
+// StateDelta contains the entries and tombstones a peer needs to converge.
 type StateDelta struct {
-	Entries    []Entry
+	// Entries holds live entries the peer is missing or has stale.
+	Entries []Entry
+	// Tombstones holds removal records for entries the peer still has.
 	Tombstones []tombstone
 }
 
