@@ -40,8 +40,9 @@ Zero external dependencies. Single Go module.
 - **Cluster supervision**: user-space `ClusterSupervisor` that watches for node failures, uses leader election for single-decision-maker semantics, and delegates to a pluggable `ClusterSupervisionPolicy` for placement decisions. `SimpleRestartPolicy` included.
 - **Cluster router**: `ClusterRouter` provides distributed service groups. Workers on any node join a named service, and any node can route to the group using round-robin, random, or consistent-hash strategies. Worker lists replicate via CRDT gossip. No coordinator node — routing decisions are local.
 - **Singleton actors**: `SingletonManager` guarantees exactly one instance of an actor runs cluster-wide. Each singleton gets its own election scope — singletons distribute across nodes via consistent hashing (not all on the leader). On leadership change, the actor stops on the old node and starts on the new one.
+- **DaemonSet actors**: `DaemonSetManager` runs an actor on every node. Cross-node addressing via `SendTo(ctx, name, nodeID, payload)` and `AskTo` — no PID construction, no generation guessing. `Broadcast` sends to all nodes. Works seamlessly in single-node mode.
 - **Distributed Ask**: `AskPID(ctx, pid, payload, timeout)` — request-response across nodes. The reply traverses the transport back via node-qualified `__ask_reply@nodeID` namespaces.
-- **Graceful drain**: `Drain(ctx, cluster, cfg, opts...)` — planned shutdown. Emits `MemberLeave` (vs `MemberFailed`), stops singletons so they migrate, deregisters names, waits for in-flight work, then stops transport.
+- **Graceful drain**: `Drain(ctx, cluster, cfg, opts...)` — planned shutdown. Emits `MemberLeave` (vs `MemberFailed`), stops singletons and daemons, deregisters names, waits for in-flight work, then stops transport.
 - **Membership events**: `cluster.membership` PubSub topic for actors to observe join/leave/fail. `Runtime.ClusterMembers()` query API.
 - **Gossip protocol**: generic `GossipProtocol` with configurable interval and fanout. Used by CRDT registry and gossip PubSub adapter.
 
@@ -249,12 +250,38 @@ sm.Start(ctx)
 // sm.Running() shows which ones are on this node.
 ```
 
+### DaemonSet Actors
+
+```go
+dm := cluster.NewDaemonSetManager(rt, c, codec)
+dm.Register(cluster.DaemonSpec{
+    Name:    "coordinator",
+    Handler: coordinatorHandler,
+})
+dm.Register(cluster.DaemonSpec{
+    Name:    "metrics-collector",
+    Handler: metricsHandler,
+})
+dm.Start(ctx)
+// Daemons run on every node automatically.
+
+// Send to a specific node's daemon — no PID needed:
+dm.SendTo(ctx, "coordinator", "node-3", payload)
+
+// Request-response to a specific node's daemon:
+result, err := dm.AskTo(ctx, "coordinator", "node-3", request, 5*time.Second)
+
+// Send to the daemon on ALL nodes:
+dm.Broadcast(ctx, "metrics-collector", flushCommand)
+```
+
 ### Graceful Drain
 
 ```go
 // Planned shutdown (deploy, scale-down):
 cluster.Drain(ctx, c, cluster.DrainConfig{Timeout: 30 * time.Second},
-    cluster.WithSingletonManager(sm),  // singletons migrate to other nodes
+    cluster.WithSingletonManager(sm),   // singletons migrate to other nodes
+    cluster.WithDaemonSetManager(dm),   // daemons stop
     cluster.WithRegistry(registry),     // names deregistered
 )
 // Peers see MemberLeave (not MemberFailed), so no false failure recovery.
@@ -547,6 +574,28 @@ type SingletonSpec struct {
 }
 ```
 
+### DaemonSpec
+
+```go
+type DaemonSpec struct {
+    Name         string           // actor ID — same on every node
+    InitialState any
+    Handler      actor.Handler
+    Options      []actor.ActorOption
+}
+
+type DaemonSetManager struct { ... }
+
+func NewDaemonSetManager(runtime *actor.Runtime, cluster *Cluster, codec Codec) *DaemonSetManager
+func (dm *DaemonSetManager) Register(spec DaemonSpec)
+func (dm *DaemonSetManager) Start(ctx context.Context)
+func (dm *DaemonSetManager) Stop()
+func (dm *DaemonSetManager) Running() []string
+func (dm *DaemonSetManager) SendTo(ctx context.Context, name string, nodeID NodeID, payload any) actor.PIDSendAck
+func (dm *DaemonSetManager) AskTo(ctx context.Context, name string, nodeID NodeID, payload any, timeout time.Duration) (actor.AskResult, error)
+func (dm *DaemonSetManager) Broadcast(ctx context.Context, name string, payload any) []actor.PIDSendAck
+```
+
 ### DrainConfig
 
 ```go
@@ -556,6 +605,7 @@ type DrainConfig struct {
 
 // Options:
 func WithSingletonManager(sm *SingletonManager) DrainOption
+func WithDaemonSetManager(dm *DaemonSetManager) DrainOption
 func WithRegistry(r *CRDTRegistry) DrainOption
 ```
 
