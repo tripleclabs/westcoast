@@ -15,6 +15,10 @@ type SingletonSpec struct {
 	InitialState any
 	Handler      actor.Handler
 	Options      []actor.ActorOption
+	// Placement restricts which nodes can host this singleton. If nil,
+	// any node is eligible. When set, only matching nodes participate
+	// in the leader election for this singleton's scope.
+	Placement NodeMatcher
 }
 
 // SingletonManager ensures that a set of singleton actors run on
@@ -23,8 +27,9 @@ type SingletonSpec struct {
 // starts on the new one.
 type SingletonManager struct {
 	runtime  *actor.Runtime
-	election LeaderElection
+	election *RingElection
 	registry *CRDTRegistry
+	cluster  *Cluster
 
 	mu         sync.Mutex
 	singletons map[string]*singletonState
@@ -36,14 +41,19 @@ type singletonState struct {
 	running bool
 }
 
-// NewSingletonManager creates a SingletonManager that uses the given runtime, election, and registry.
-func NewSingletonManager(runtime *actor.Runtime, election LeaderElection, registry *CRDTRegistry) *SingletonManager {
-	return &SingletonManager{
+// NewSingletonManager creates a SingletonManager. The cluster parameter
+// is optional — only needed when using Placement predicates on specs.
+func NewSingletonManager(runtime *actor.Runtime, election *RingElection, registry *CRDTRegistry, cluster ...*Cluster) *SingletonManager {
+	sm := &SingletonManager{
 		runtime:    runtime,
 		election:   election,
 		registry:   registry,
 		singletons: make(map[string]*singletonState),
 	}
+	if len(cluster) > 0 {
+		sm.cluster = cluster[0]
+	}
+	return sm
 }
 
 // Register adds a singleton spec. The actor will be started if this node
@@ -118,7 +128,8 @@ func (sm *SingletonManager) watchLoop(ctx context.Context, name string, ch <-cha
 	}
 }
 
-// reconcile checks each singleton: start if we're the leader, stop if we're not.
+// reconcile checks each singleton: start if we're the leader (among
+// placement-eligible nodes), stop if we're not.
 func (sm *SingletonManager) reconcile() {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
@@ -127,7 +138,17 @@ func (sm *SingletonManager) reconcile() {
 
 	for name, s := range sm.singletons {
 		scope := "singleton/" + name
-		isLeader := sm.election.IsLeader(scope)
+		var isLeader bool
+
+		if s.spec.Placement != nil && sm.cluster != nil {
+			// Placement-constrained: only matching nodes are candidates.
+			members := sm.cluster.Members()
+			members = append(members, sm.cluster.Self())
+			leader, ok := sm.election.LeaderAmong(scope, s.spec.Placement, members)
+			isLeader = ok && string(leader) == nodeID
+		} else {
+			isLeader = sm.election.IsLeader(scope)
+		}
 
 		if isLeader && !s.running {
 			// Start the singleton on this node.

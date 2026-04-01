@@ -8,20 +8,22 @@ import (
 	"github.com/tripleclabs/westcoast/src/actor"
 )
 
-// DaemonSpec defines an actor that should run on every node in the cluster.
-// The same spec is registered on every node's DaemonSetManager.
+// DaemonSpec defines an actor that should run on every matching node.
+// If Placement is nil, the daemon runs on ALL nodes.
 type DaemonSpec struct {
-	// Name is the actor ID — identical on every node.
+	// Name is the actor ID — identical on every node that runs it.
 	Name         string
 	InitialState any
 	Handler      actor.Handler
 	Options      []actor.ActorOption
+	// Placement restricts which nodes run this daemon. If nil, all nodes match.
+	Placement NodeMatcher
 }
 
-// DaemonSetManager ensures registered daemon actors run on every node.
-// On this node, daemons are created locally. For cross-node communication,
-// SendTo/AskTo/Broadcast route messages via the cluster transport using
-// actor-ID-based delivery (no PID or generation required).
+// DaemonSetManager ensures registered daemon actors run on every matching
+// node. On this node, daemons are created when the local metadata matches
+// the placement predicate. When metadata changes (via UpdateTags + gossip),
+// daemons are started or stopped reactively.
 type DaemonSetManager struct {
 	runtime *actor.Runtime
 	cluster *Cluster
@@ -49,19 +51,19 @@ func NewDaemonSetManager(runtime *actor.Runtime, cluster *Cluster, codec Codec) 
 	}
 }
 
-// Register adds a daemon spec. If the manager is already started,
-// the daemon is created immediately.
+// Register adds a daemon spec. If the manager is already started and
+// this node matches the placement predicate, the daemon is created.
 func (dm *DaemonSetManager) Register(spec DaemonSpec) {
 	dm.mu.Lock()
 	defer dm.mu.Unlock()
 
 	dm.daemons[spec.Name] = &daemonState{spec: spec}
 	if dm.started {
-		dm.startDaemon(spec)
+		dm.reconcileDaemon(spec.Name)
 	}
 }
 
-// Start creates all registered daemon actors on this node.
+// Start creates daemon actors that match this node's metadata.
 func (dm *DaemonSetManager) Start(ctx context.Context) {
 	dm.mu.Lock()
 	defer dm.mu.Unlock()
@@ -69,8 +71,8 @@ func (dm *DaemonSetManager) Start(ctx context.Context) {
 	ctx, dm.cancel = context.WithCancel(ctx)
 	dm.started = true
 
-	for _, d := range dm.daemons {
-		dm.startDaemon(d.spec)
+	for name := range dm.daemons {
+		dm.reconcileDaemon(name)
 	}
 }
 
@@ -90,6 +92,20 @@ func (dm *DaemonSetManager) Stop() {
 	}
 }
 
+// Reconcile re-evaluates placement for all daemons against current
+// local metadata. Call this when local tags change to reactively
+// start/stop daemons based on updated predicates.
+func (dm *DaemonSetManager) Reconcile() {
+	dm.mu.Lock()
+	defer dm.mu.Unlock()
+	if !dm.started {
+		return
+	}
+	for name := range dm.daemons {
+		dm.reconcileDaemon(name)
+	}
+}
+
 // Running returns the names of daemons currently running on this node.
 func (dm *DaemonSetManager) Running() []string {
 	dm.mu.Lock()
@@ -106,7 +122,6 @@ func (dm *DaemonSetManager) Running() []string {
 // SendTo sends a fire-and-forget message to a daemon on a specific node.
 // If nodeID matches the local node, delivers directly without transport.
 func (dm *DaemonSetManager) SendTo(ctx context.Context, name string, nodeID NodeID, payload any) actor.PIDSendAck {
-	// Local delivery — no transport, no codec, no PID.
 	if string(nodeID) == dm.runtime.NodeID() || (dm.cluster == nil && nodeID == "") {
 		ack := dm.runtime.Send(ctx, name, payload)
 		return actor.PIDSendAck{
@@ -115,7 +130,6 @@ func (dm *DaemonSetManager) SendTo(ctx context.Context, name string, nodeID Node
 		}
 	}
 
-	// Remote delivery via transport.
 	if dm.cluster == nil || dm.codec == nil {
 		return actor.PIDSendAck{Outcome: actor.PIDRejectedNotFound}
 	}
@@ -141,16 +155,11 @@ func (dm *DaemonSetManager) SendTo(ctx context.Context, name string, nodeID Node
 }
 
 // AskTo sends a request to a daemon on a specific node and waits for a reply.
-// If nodeID matches the local node, uses the local Ask path.
 func (dm *DaemonSetManager) AskTo(ctx context.Context, name string, nodeID NodeID, payload any, timeout time.Duration) (actor.AskResult, error) {
-	// Local ask — direct, no transport.
 	if string(nodeID) == dm.runtime.NodeID() || (dm.cluster == nil && nodeID == "") {
 		return dm.runtime.Ask(ctx, name, payload, timeout)
 	}
 
-	// Remote ask via AskPID. The PID uses the remote node's namespace
-	// so it routes through the transport. The remote side delivers by
-	// actor ID via InboundDispatcher.
 	remotePID := actor.PID{
 		Namespace:  string(nodeID),
 		ActorID:    name,
@@ -159,18 +168,9 @@ func (dm *DaemonSetManager) AskTo(ctx context.Context, name string, nodeID NodeI
 	return dm.runtime.AskPID(ctx, remotePID, payload, timeout)
 }
 
-// Broadcast sends a message to the named daemon on ALL nodes, including self.
+// Broadcast sends a message to the named daemon on ALL matching nodes.
 func (dm *DaemonSetManager) Broadcast(ctx context.Context, name string, payload any) []actor.PIDSendAck {
-	// Collect all node IDs: self + cluster members.
-	selfID := NodeID(dm.runtime.NodeID())
-	var nodes []NodeID
-	nodes = append(nodes, selfID)
-
-	if dm.cluster != nil {
-		for _, m := range dm.cluster.Members() {
-			nodes = append(nodes, m.ID)
-		}
-	}
+	nodes := dm.matchingNodes(name)
 
 	acks := make([]actor.PIDSendAck, len(nodes))
 	for i, nodeID := range nodes {
@@ -179,12 +179,69 @@ func (dm *DaemonSetManager) Broadcast(ctx context.Context, name string, payload 
 	return acks
 }
 
-func (dm *DaemonSetManager) startDaemon(spec DaemonSpec) {
-	_, err := dm.runtime.CreateActor(spec.Name, spec.InitialState, spec.Handler, spec.Options...)
-	if err != nil {
-		return // may already exist
+// matchingNodes returns the node IDs where a daemon should be running,
+// based on its placement predicate.
+func (dm *DaemonSetManager) matchingNodes(name string) []NodeID {
+	dm.mu.Lock()
+	d, ok := dm.daemons[name]
+	dm.mu.Unlock()
+	if !ok {
+		return nil
 	}
-	dm.daemons[spec.Name].running = true
+
+	selfID := NodeID(dm.runtime.NodeID())
+	var nodes []NodeID
+
+	// Check self.
+	if dm.shouldRunLocally(d.spec) {
+		nodes = append(nodes, selfID)
+	}
+
+	// Check peers.
+	if dm.cluster != nil {
+		for _, m := range dm.cluster.Members() {
+			if d.spec.Placement == nil || d.spec.Placement(m) {
+				nodes = append(nodes, m.ID)
+			}
+		}
+	}
+
+	return nodes
+}
+
+// reconcileDaemon starts or stops a single daemon based on whether this
+// node matches the placement predicate. Must be called with dm.mu held.
+func (dm *DaemonSetManager) reconcileDaemon(name string) {
+	d, ok := dm.daemons[name]
+	if !ok {
+		return
+	}
+
+	shouldRun := dm.shouldRunLocally(d.spec)
+
+	if shouldRun && !d.running {
+		_, err := dm.runtime.CreateActor(d.spec.Name, d.spec.InitialState, d.spec.Handler, d.spec.Options...)
+		if err == nil {
+			d.running = true
+		}
+	}
+
+	if !shouldRun && d.running {
+		dm.runtime.Stop(name)
+		d.running = false
+	}
+}
+
+// shouldRunLocally checks if this node matches a daemon's placement predicate.
+func (dm *DaemonSetManager) shouldRunLocally(spec DaemonSpec) bool {
+	if spec.Placement == nil {
+		return true // no predicate = run everywhere
+	}
+	if dm.cluster == nil {
+		// Single-node mode: build a minimal NodeMeta for matching.
+		return spec.Placement(NodeMeta{ID: NodeID(dm.runtime.NodeID())})
+	}
+	return spec.Placement(dm.cluster.Self())
 }
 
 func pidOutcomeFromSubmit(result actor.SubmitResult) actor.PIDDeliveryOutcome {

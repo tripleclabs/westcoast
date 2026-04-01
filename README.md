@@ -38,7 +38,7 @@ Zero external dependencies. Single Go module.
 - **Distributed PubSub** (Phoenix.PubSub model): subscriptions stay local, publications broadcast to all nodes. `DirectPubSubAdapter` (fan-out to all) and `GossipPubSubAdapter` (epidemic gossip) included. No re-broadcast loops.
 - **Leader election**: `RingElection` — deterministic from membership (hash-based, no voting protocol). Scoped elections (multiple independent elections concurrently). Monotonically increasing terms for fencing.
 - **Cluster supervision**: user-space `ClusterSupervisor` that watches for node failures, uses leader election for single-decision-maker semantics, and delegates to a pluggable `ClusterSupervisionPolicy` for placement decisions. `SimpleRestartPolicy` included.
-- **Cluster router**: `ClusterRouter` provides distributed service groups. Workers on any node join a named service, and any node can route to the group using round-robin, random, or consistent-hash strategies. Worker lists replicate via CRDT gossip. No coordinator node — routing decisions are local.
+- **Cluster router**: `ClusterRouter` provides distributed service groups with metadata-aware routing. Workers on any node join a named service. Supports static filtering (`WithWorkerFilter`), static preference (`WithWorkerPreference`), and call-time locality-aware routing (`SendWith` + `Nearest`). Strategies: round-robin, random, consistent-hash. Worker lists replicate via CRDT gossip. No coordinator node.
 - **Singleton actors**: `SingletonManager` guarantees exactly one instance of an actor runs cluster-wide. Each singleton gets its own election scope — singletons distribute across nodes via consistent hashing (not all on the leader). On leadership change, the actor stops on the old node and starts on the new one.
 - **DaemonSet actors**: `DaemonSetManager` runs an actor on every node. Cross-node addressing via `SendTo(ctx, name, nodeID, payload)` and `AskTo` — no PID construction, no generation guessing. `Broadcast` sends to all nodes. Works seamlessly in single-node mode.
 - **Distributed Ask**: `AskPID(ctx, pid, payload, timeout)` — request-response across nodes. The reply traverses the transport back via node-qualified `__ask_reply@nodeID` namespaces.
@@ -240,18 +240,31 @@ for _, m := range c.Members() {
 ### Cluster Router (Distributed Services)
 
 ```go
-cr := cluster.NewClusterRouter(rt, registry)
+cr := cluster.NewClusterRouter(rt, registry, c) // c = *Cluster, needed for metadata routing
+
+// Basic routing:
 cr.Configure("payment-processor", actor.RouterStrategyRoundRobin)
-
-// Workers on any node join the service group:
 cr.Join("payment-processor", workerPID)
+cr.Send(ctx, "payment-processor", payload)
+cr.Ask(ctx, "payment-processor", payload, timeout)
+cr.Broadcast(ctx, "payment-processor", payload)
 
-// Any node can route to the group:
-cr.Send(ctx, "payment-processor", payload)        // picks one worker
-cr.Ask(ctx, "payment-processor", payload, timeout) // request-response to one worker
-cr.Broadcast(ctx, "payment-processor", payload)    // sends to all workers
-cr.Members("payment-processor")                    // list all workers
-cr.Leave("payment-processor", workerPID)           // remove a worker
+// Metadata-aware routing (static):
+cr.Configure("ml-inference", actor.RouterStrategyRoundRobin,
+    cluster.WithWorkerFilter(cluster.TagGTE("gpus", 1)),        // only GPU nodes
+    cluster.WithWorkerPreference(cluster.RankByTag("gpus", cluster.Highest)), // prefer most GPUs
+)
+
+// Locality-aware routing (call-time):
+cr.SendWith(ctx, "api", payload,
+    cluster.Nearest(map[string]string{
+        "az":     "eu-west-1a",    // prefer same AZ (score 3 if all match)
+        "region": "eu-west-1",     // then same region (score 2)
+        "continent": "eu",         // then same continent (score 1)
+    }),
+)
+
+// Static + call-time preferences combine — scores are summed.
 ```
 
 ### Singleton Actors
@@ -574,14 +587,24 @@ type PlacementDecision struct {
 ```go
 type ClusterRouter struct { ... }
 
-func NewClusterRouter(runtime *actor.Runtime, registry *CRDTRegistry) *ClusterRouter
-func (cr *ClusterRouter) Configure(serviceName string, strategy actor.RouterStrategy)
+func NewClusterRouter(runtime *actor.Runtime, registry *CRDTRegistry, cluster ...*Cluster) *ClusterRouter
+func (cr *ClusterRouter) Configure(serviceName string, strategy actor.RouterStrategy, opts ...RouterOption)
 func (cr *ClusterRouter) Join(serviceName string, pid actor.PID) error
 func (cr *ClusterRouter) Leave(serviceName string, pid actor.PID)
 func (cr *ClusterRouter) Members(serviceName string) []actor.PID
 func (cr *ClusterRouter) Send(ctx context.Context, serviceName string, payload any) actor.PIDSendAck
+func (cr *ClusterRouter) SendWith(ctx context.Context, serviceName string, payload any, opts ...RoutePreference) actor.PIDSendAck
 func (cr *ClusterRouter) Ask(ctx context.Context, serviceName string, payload any, timeout time.Duration) (actor.AskResult, error)
+func (cr *ClusterRouter) AskWith(ctx context.Context, serviceName string, payload any, timeout time.Duration, opts ...RoutePreference) (actor.AskResult, error)
 func (cr *ClusterRouter) Broadcast(ctx context.Context, serviceName string, payload any) []actor.PIDSendAck
+
+// Configure-time options:
+func WithWorkerFilter(m NodeMatcher) RouterOption
+func WithWorkerPreference(r NodeRanker) RouterOption
+
+// Call-time preferences:
+func Nearest(tags map[string]string) RoutePreference      // locality scoring
+func PreferTag(key string, direction RankDirection) RoutePreference  // numeric ranking
 ```
 
 ### SingletonSpec

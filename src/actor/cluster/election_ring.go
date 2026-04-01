@@ -148,19 +148,38 @@ func (e *RingElection) ensureScopeLocked(scope string) *electionScope {
 // computeLeaderLocked determines the leader for a scope by hashing
 // (scope + nodeID) for each member and picking the lowest hash.
 func (e *RingElection) computeLeaderLocked(scope string) NodeID {
-	if len(e.members) == 0 {
+	return computeLeader(scope, e.members)
+}
+
+// LeaderAmong computes the leader for a scope considering only nodes
+// that pass the matcher. Returns ("", false) if no candidates match.
+// This is a read-only query — it does not affect stored scope state.
+func (e *RingElection) LeaderAmong(scope string, matcher NodeMatcher, allMembers []NodeMeta) (NodeID, bool) {
+	candidates := FilterNodes(allMembers, matcher)
+	if len(candidates) == 0 {
+		return "", false
+	}
+	filtered := make(map[NodeID]bool, len(candidates))
+	for _, c := range candidates {
+		filtered[c.ID] = true
+	}
+	return computeLeader(scope, filtered), true
+}
+
+// computeLeader picks the node with the lowest hash(scope + nodeID).
+func computeLeader(scope string, members map[NodeID]bool) NodeID {
+	if len(members) == 0 {
 		return ""
 	}
-
 	type candidate struct {
 		id   NodeID
 		hash uint64
 	}
-	candidates := make([]candidate, 0, len(e.members))
-	for id := range e.members {
+	candidates := make([]candidate, 0, len(members))
+	for id := range members {
 		h := fnv.New64a()
 		h.Write([]byte(scope))
-		h.Write([]byte{0}) // separator
+		h.Write([]byte{0})
 		h.Write([]byte(id))
 		candidates = append(candidates, candidate{id: id, hash: h.Sum64()})
 	}
