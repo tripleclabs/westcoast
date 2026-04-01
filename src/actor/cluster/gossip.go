@@ -33,7 +33,7 @@ type GossipProtocol struct {
 	fanout   int
 
 	mu        sync.RWMutex
-	onProduce func() []byte        // called to produce delta for a gossip round
+	onProduce func() []byte                  // called to produce delta for a gossip round
 	onReceive func(from NodeID, data []byte) // called when a delta arrives
 
 	cancel context.CancelFunc

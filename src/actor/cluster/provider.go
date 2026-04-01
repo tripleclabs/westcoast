@@ -6,7 +6,7 @@ var (
 	// ErrProviderAlreadyStarted is returned when Start is called on a running provider.
 	ErrProviderAlreadyStarted = errors.New("provider_already_started")
 	// ErrProviderNotStarted is returned when Stop is called on a provider that was never started.
-	ErrProviderNotStarted     = errors.New("provider_not_started")
+	ErrProviderNotStarted = errors.New("provider_not_started")
 )
 
 // MemberEventType classifies cluster membership changes.

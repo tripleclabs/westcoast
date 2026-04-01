@@ -94,7 +94,7 @@ func (r *CRDTRegistry) AllEntries() map[string]actor.PID {
 
 // --- Gossip integration ---
 
-func (r *CRDTRegistry) Digest() crdt.Digest        { return r.set.Digest() }
+func (r *CRDTRegistry) Digest() crdt.Digest                    { return r.set.Digest() }
 func (r *CRDTRegistry) DeltaFor(d crdt.Digest) crdt.StateDelta { return r.set.DeltaFor(d) }
 func (r *CRDTRegistry) MergeDelta(d crdt.StateDelta)           { r.set.MergeDelta(d) }
 func (r *CRDTRegistry) Compact() int                           { return r.set.Compact() }

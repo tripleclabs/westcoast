@@ -188,12 +188,12 @@ func TestClusterRouter_CrossNode(t *testing.T) {
 	provider2 := NewFixedProvider(FixedProviderConfig{})
 
 	c1, _ := NewCluster(ClusterConfig{
-		Self: NodeMeta{ID: "node-1", Addr: "127.0.0.1:0"},
+		Self:     NodeMeta{ID: "node-1", Addr: "127.0.0.1:0"},
 		Provider: provider1, Transport: transport1,
 		Auth: NoopAuth{}, Codec: codec,
 	})
 	c2, _ := NewCluster(ClusterConfig{
-		Self: NodeMeta{ID: "node-2", Addr: "127.0.0.1:0"},
+		Self:     NodeMeta{ID: "node-2", Addr: "127.0.0.1:0"},
 		Provider: provider2, Transport: transport2,
 		Auth: NoopAuth{}, Codec: codec,
 	})

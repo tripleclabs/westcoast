@@ -6,13 +6,13 @@ import (
 )
 
 var (
-	ErrTransportClosed   = errors.New("transport_closed")
-	ErrConnectionClosed  = errors.New("connection_closed")
-	ErrNodeUnreachable   = errors.New("node_unreachable")
-	ErrDialFailed        = errors.New("dial_failed")
-	ErrHandshakeFailed   = errors.New("handshake_failed")
-	ErrSendFailed        = errors.New("send_failed")
-	ErrEnvelopeTooLarge  = errors.New("envelope_too_large")
+	ErrTransportClosed  = errors.New("transport_closed")
+	ErrConnectionClosed = errors.New("connection_closed")
+	ErrNodeUnreachable  = errors.New("node_unreachable")
+	ErrDialFailed       = errors.New("dial_failed")
+	ErrHandshakeFailed  = errors.New("handshake_failed")
+	ErrSendFailed       = errors.New("send_failed")
+	ErrEnvelopeTooLarge = errors.New("envelope_too_large")
 )
 
 // Transport abstracts the network layer for inter-node communication.

@@ -45,6 +45,10 @@ func (m *pidLookupMetrics) ObserveAskOutcome(string)                           {
 func (m *pidLookupMetrics) ObserveRouterOutcome(string, string)                {}
 func (m *pidLookupMetrics) ObserveBatchOutcome(string)                         {}
 func (m *pidLookupMetrics) ObservePubSubOutcome(string, string, int)           {}
+func (m *pidLookupMetrics) ObserveRemoteSendLatency(string, time.Duration)     {}
+func (m *pidLookupMetrics) ObserveRemoteSendOutcome(string, string)            {}
+func (m *pidLookupMetrics) ObserveClusterMemberEvent(string)                   {}
+func (m *pidLookupMetrics) ObserveCodecLatency(string, time.Duration)          {}
 func (m *pidLookupMetrics) ObservePIDLookupLatency(_ string, d time.Duration) {
 	n := m.seen.Add(1)
 	if n != 1 && n%64 != 0 {

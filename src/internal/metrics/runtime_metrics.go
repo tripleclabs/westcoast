@@ -52,12 +52,14 @@ func (m *RuntimeMetrics) ObserveLocalSendLatency(_ string, d time.Duration) {
 	m.localSent++
 	m.mu.Unlock()
 }
+
 // ObserveLocalRouting increments the counter for the given routing outcome.
 func (m *RuntimeMetrics) ObserveLocalRouting(_ string, outcome string) {
 	m.mu.Lock()
 	m.localByResult[outcome]++
 	m.mu.Unlock()
 }
+
 // ObservePanicIntercept implements Hooks and is a no-op in RuntimeMetrics.
 func (m *RuntimeMetrics) ObservePanicIntercept(string) {}
 
@@ -79,30 +81,35 @@ func (m *RuntimeMetrics) ObserveRegistryLookupLatency(_ string, _ time.Duration)
 
 // ObserveRegistryOperation implements Hooks and is a no-op in RuntimeMetrics.
 func (m *RuntimeMetrics) ObserveRegistryOperation(_ string) {}
+
 // ObserveLifecycleHook increments the counter for the given phase and result combination.
 func (m *RuntimeMetrics) ObserveLifecycleHook(phase string, result string) {
 	m.mu.Lock()
 	m.lifecycleBy[phase+":"+result]++
 	m.mu.Unlock()
 }
+
 // ObserveGuardrailDecision increments the counter for the given scope and result combination.
 func (m *RuntimeMetrics) ObserveGuardrailDecision(scope string, result string) {
 	m.mu.Lock()
 	m.guardrailBy[scope+":"+result]++
 	m.mu.Unlock()
 }
+
 // ObserveAskOutcome increments the counter for the given ask outcome.
 func (m *RuntimeMetrics) ObserveAskOutcome(outcome string) {
 	m.mu.Lock()
 	m.askBy[outcome]++
 	m.mu.Unlock()
 }
+
 // ObserveRouterOutcome increments the counter for the given strategy and outcome combination.
 func (m *RuntimeMetrics) ObserveRouterOutcome(strategy string, outcome string) {
 	m.mu.Lock()
 	m.routerBy[strategy+":"+outcome]++
 	m.mu.Unlock()
 }
+
 // ObserveBatchOutcome increments the counter for the given batch result.
 func (m *RuntimeMetrics) ObserveBatchOutcome(result string) {
 	m.mu.Lock()

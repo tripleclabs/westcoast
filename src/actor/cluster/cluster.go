@@ -70,7 +70,7 @@ func NewCluster(cfg ClusterConfig) (*Cluster, error) {
 		cfg.Topology = FullMeshTopology{}
 	}
 	return &Cluster{
-		cfg:   cfg,
+		cfg:     cfg,
 		conns:   make(map[NodeID]Connection),
 		peers:   make(map[NodeID]NodeMeta),
 		dialing: make(map[NodeID]bool),

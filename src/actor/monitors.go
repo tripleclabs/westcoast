@@ -33,8 +33,8 @@ type monitorEntry struct {
 
 // monitorManager tracks all active monitors.
 type monitorManager struct {
-	mu   sync.RWMutex
-	seq  atomic.Uint64
+	mu  sync.RWMutex
+	seq atomic.Uint64
 	// byTarget maps target actorID → list of monitors.
 	byTarget map[string][]monitorEntry
 	// byRef maps monitorID → entry for fast demonitor.

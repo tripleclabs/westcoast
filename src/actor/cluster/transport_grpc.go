@@ -22,11 +22,13 @@ func init() {
 // than gRPC streaming for actor message passing.
 //
 // Wire protocol:
-//   [4 bytes big-endian length][gob-encoded Envelope]
+//
+//	[4 bytes big-endian length][gob-encoded Envelope]
 //
 // Handshake protocol (on connection establishment):
-//   client → server: [4 bytes len]["HELO"][4 bytes len][node-id][4 bytes len][auth-credentials]
-//   server → client: [4 bytes len]["OK"] or connection closed on rejection
+//
+//	client → server: [4 bytes len]["HELO"][4 bytes len][node-id][4 bytes len][auth-credentials]
+//	server → client: [4 bytes len]["OK"] or connection closed on rejection
 type GRPCTransport struct {
 	mu      sync.RWMutex
 	handler InboundHandler
@@ -245,7 +247,7 @@ func (c *tcpConn) Close() error {
 	return c.raw.Close()
 }
 
-func (c *tcpConn) RemoteAddr() string  { return c.remoteAddr }
+func (c *tcpConn) RemoteAddr() string   { return c.remoteAddr }
 func (c *tcpConn) RemoteNodeID() NodeID { return c.remoteNode }
 
 // --- Wire encoding helpers ---

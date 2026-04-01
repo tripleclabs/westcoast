@@ -183,8 +183,8 @@ func (r *RingTopology) Responsible(key string, members []NodeMeta, replication i
 // --- internal ring representation ---
 
 type ring struct {
-	nodes     []NodeID      // unique physical nodes in ring order
-	positions []vnodePos    // all vnode positions sorted by hash
+	nodes     []NodeID       // unique physical nodes in ring order
+	positions []vnodePos     // all vnode positions sorted by hash
 	nodeIndex map[NodeID]int // node -> index in nodes slice
 }
 

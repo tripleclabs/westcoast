@@ -3,11 +3,22 @@ package cluster
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/tripleclabs/westcoast/src/actor"
 	"github.com/tripleclabs/westcoast/src/internal/metrics"
 )
+
+// nodeIDFromNamespace extracts the target node ID from a PID namespace.
+// For normal PIDs, the namespace IS the node ID. For ask-reply PIDs
+// like "__ask_reply@node-1", it extracts "node-1".
+func nodeIDFromNamespace(ns string) NodeID {
+	if strings.HasPrefix(ns, "__ask_reply@") {
+		return NodeID(ns[len("__ask_reply@"):])
+	}
+	return NodeID(ns)
+}
 
 // RemoteSender handles encoding and sending messages to remote nodes.
 type RemoteSender struct {
@@ -30,7 +41,7 @@ func NewRemoteSender(cluster *Cluster, codec Codec, m metrics.Hooks) *RemoteSend
 
 // Send encodes a message payload and sends it to a remote node as an Envelope.
 func (rs *RemoteSender) Send(ctx context.Context, senderActorID string, pid actor.PID, payload any, msgID uint64) (actor.PIDSendAck, error) {
-	targetNode := NodeID(pid.Namespace)
+	targetNode := nodeIDFromNamespace(pid.Namespace)
 	start := time.Now()
 
 	encoded, err := rs.codec.Encode(payload)
@@ -41,15 +52,15 @@ func (rs *RemoteSender) Send(ctx context.Context, senderActorID string, pid acto
 	}
 
 	env := Envelope{
-		SenderNode:    rs.cluster.LocalNodeID(),
-		SenderActorID: senderActorID,
-		TargetNode:    targetNode,
-		TargetActorID: pid.ActorID,
-		Namespace:     pid.Namespace,
-		Generation:    pid.Generation,
-		TypeName:      typeNameOf(payload),
-		MessageID:     msgID,
-		Payload:       encoded,
+		SenderNode:     rs.cluster.LocalNodeID(),
+		SenderActorID:  senderActorID,
+		TargetNode:     targetNode,
+		TargetActorID:  pid.ActorID,
+		Namespace:      pid.Namespace,
+		Generation:     pid.Generation,
+		TypeName:       typeNameOf(payload),
+		MessageID:      msgID,
+		Payload:        encoded,
 		SentAtUnixNano: time.Now().UnixNano(),
 	}
 
@@ -66,7 +77,7 @@ func (rs *RemoteSender) Send(ctx context.Context, senderActorID string, pid acto
 
 // SendAsk sends an ask request to a remote node, embedding the reply-to PID.
 func (rs *RemoteSender) SendAsk(ctx context.Context, senderActorID string, pid actor.PID, payload any, msgID uint64, askRequestID string, replyTo actor.PID) (actor.PIDSendAck, error) {
-	targetNode := NodeID(pid.Namespace)
+	targetNode := nodeIDFromNamespace(pid.Namespace)
 	start := time.Now()
 
 	encoded, err := rs.codec.Encode(payload)

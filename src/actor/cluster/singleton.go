@@ -26,9 +26,9 @@ type SingletonManager struct {
 	election LeaderElection
 	registry *CRDTRegistry
 
-	mu        sync.Mutex
+	mu         sync.Mutex
 	singletons map[string]*singletonState
-	cancel    context.CancelFunc
+	cancel     context.CancelFunc
 }
 
 type singletonState struct {

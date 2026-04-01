@@ -46,9 +46,12 @@ func Drain(ctx context.Context, c *Cluster, cfg DrainConfig, opts ...DrainOption
 		})
 	}
 
-	// 2. Stop singletons — they'll migrate to other nodes.
+	// 2. Stop singletons and daemons.
 	if o.singletonManager != nil {
 		o.singletonManager.Stop()
+	}
+	if o.daemonSetManager != nil {
+		o.daemonSetManager.Stop()
 	}
 
 	// 3. Deregister all names from the cluster registry.
@@ -73,12 +76,18 @@ type DrainOption func(*drainOptions)
 
 type drainOptions struct {
 	singletonManager *SingletonManager
+	daemonSetManager *DaemonSetManager
 	registry         *CRDTRegistry
 }
 
 // WithSingletonManager stops singletons during drain so they migrate.
 func WithSingletonManager(sm *SingletonManager) DrainOption {
 	return func(o *drainOptions) { o.singletonManager = sm }
+}
+
+// WithDaemonSetManager stops daemon actors during drain.
+func WithDaemonSetManager(dm *DaemonSetManager) DrainOption {
+	return func(o *drainOptions) { o.daemonSetManager = dm }
 }
 
 // WithRegistry deregisters all local names during drain.
