@@ -43,8 +43,9 @@ Zero external dependencies. Single Go module.
 - **DaemonSet actors**: `DaemonSetManager` runs an actor on every node. Cross-node addressing via `SendTo(ctx, name, nodeID, payload)` and `AskTo` — no PID construction, no generation guessing. `Broadcast` sends to all nodes. Works seamlessly in single-node mode.
 - **Distributed Ask**: `AskPID(ctx, pid, payload, timeout)` — request-response across nodes. The reply traverses the transport back via node-qualified `__ask_reply@nodeID` namespaces.
 - **Graceful drain**: `Drain(ctx, cluster, cfg, opts...)` — planned shutdown. Emits `MemberLeave` (vs `MemberFailed`), stops singletons and daemons, deregisters names, waits for in-flight work, then stops transport.
-- **Membership events**: `cluster.membership` PubSub topic for actors to observe join/leave/fail. `Runtime.ClusterMembers()` query API.
-- **Gossip protocol**: generic `GossipProtocol` with configurable interval and fanout. Used by CRDT registry and gossip PubSub adapter.
+- **Dynamic node metadata**: `UpdateTags(map[string]string)` sets runtime metadata on a node (region, GPU count, rack, etc.). Tags gossip to all peers automatically. Changed tags emit `MemberUpdated` events. Queryable via `Members()` and `Self()`. Providers (e.g. AWS) contribute infrastructure tags at start; applications add their own at runtime.
+- **Membership events**: `cluster.membership` PubSub topic for actors to observe join/leave/fail/update. `Runtime.ClusterMembers()` query API.
+- **Gossip protocol**: generic `GossipProtocol` with `GossipRouter` for multiplexing. Used by CRDT registry, PubSub adapter, and metadata gossip.
 
 ### CRDT Library (`src/crdt`)
 
@@ -215,6 +216,26 @@ c1.Start(context.Background())
 - `ClusterMembers()` — current membership
 - `PublishMembershipEvent(ctx, event)` — emits on `cluster.membership` topic
 - `AskPID(ctx, pid, payload, timeout)` — distributed request-response
+
+### Node Metadata
+
+```go
+// Set tags at runtime — gossiped to all peers automatically:
+c.UpdateTags(map[string]string{
+    "region":  "us-east-1",
+    "gpus":    "4",
+    "rack":    "rack-12",
+})
+c.RemoveTag("rack")
+
+// Query local metadata:
+self := c.Self()  // NodeMeta with current tags
+
+// Query peer metadata (tags included):
+for _, m := range c.Members() {
+    fmt.Println(m.ID, m.Tags["region"], m.Tags["gpus"])
+}
+```
 
 ### Cluster Router (Distributed Services)
 

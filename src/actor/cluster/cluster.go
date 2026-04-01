@@ -69,6 +69,9 @@ func NewCluster(cfg ClusterConfig) (*Cluster, error) {
 	if cfg.Topology == nil {
 		cfg.Topology = FullMeshTopology{}
 	}
+	if cfg.Self.Tags == nil {
+		cfg.Self.Tags = make(map[string]string)
+	}
 	return &Cluster{
 		cfg:     cfg,
 		conns:   make(map[NodeID]Connection),
@@ -236,6 +239,73 @@ func (c *Cluster) SetOnMemberEvent(fn func(event MemberEvent)) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.cfg.OnMemberEvent = fn
+}
+
+// Self returns this node's current metadata, including dynamic tags.
+func (c *Cluster) Self() NodeMeta {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	meta := c.cfg.Self
+	meta.Tags = make(map[string]string, len(c.cfg.Self.Tags))
+	for k, v := range c.cfg.Self.Tags {
+		meta.Tags[k] = v
+	}
+	return meta
+}
+
+// UpdateTags merges the given tags into this node's metadata.
+// Changed tags are gossiped to peers automatically.
+func (c *Cluster) UpdateTags(tags map[string]string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for k, v := range tags {
+		c.cfg.Self.Tags[k] = v
+	}
+}
+
+// RemoveTag removes a tag from this node's metadata.
+func (c *Cluster) RemoveTag(key string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.cfg.Self.Tags, key)
+}
+
+// UpdatePeerMeta updates the stored metadata for a peer node.
+// Called by the metadata gossip when a peer's tags change.
+// Emits MemberUpdated if the tags actually changed.
+func (c *Cluster) UpdatePeerMeta(meta NodeMeta) bool {
+	c.mu.Lock()
+	existing, ok := c.peers[meta.ID]
+	if !ok {
+		c.mu.Unlock()
+		return false
+	}
+
+	if tagsEqual(existing.Tags, meta.Tags) {
+		c.mu.Unlock()
+		return false
+	}
+
+	c.peers[meta.ID] = meta
+	fn := c.cfg.OnMemberEvent
+	c.mu.Unlock()
+
+	if fn != nil {
+		fn(MemberEvent{Type: MemberUpdated, Member: meta})
+	}
+	return true
+}
+
+func tagsEqual(a, b map[string]string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, v := range a {
+		if b[k] != v {
+			return false
+		}
+	}
+	return true
 }
 
 // IsConnected returns whether a direct connection to the target exists.

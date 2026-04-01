@@ -159,8 +159,54 @@ func (g *GossipProtocol) doRound(ctx context.Context) {
 	}
 }
 
-// RegisterGossipHandler registers a gossip protocol with an InboundDispatcher
-// so that __gossip envelopes are routed to the protocol automatically.
+// GossipRouter multiplexes inbound gossip envelopes to the correct
+// GossipProtocol by the Protocol field. Register it once with the
+// InboundDispatcher, then add protocols to it.
+type GossipRouter struct {
+	codec     Codec
+	mu        sync.RWMutex
+	protocols map[string]*GossipProtocol
+}
+
+// NewGossipRouter creates a router and registers it with the dispatcher
+// for the __gossip envelope type.
+func NewGossipRouter(d *InboundDispatcher, codec Codec) *GossipRouter {
+	gr := &GossipRouter{
+		codec:     codec,
+		protocols: make(map[string]*GossipProtocol),
+	}
+	d.RegisterHandler("__gossip", gr.handle)
+	return gr
+}
+
+// Add registers a gossip protocol with the router.
+func (gr *GossipRouter) Add(g *GossipProtocol) {
+	gr.mu.Lock()
+	defer gr.mu.Unlock()
+	gr.protocols[g.protocol] = g
+}
+
+func (gr *GossipRouter) handle(from NodeID, env Envelope) {
+	var decoded any
+	if err := gr.codec.Decode(env.Payload, &decoded); err != nil {
+		return
+	}
+	ge, ok := decoded.(GossipEnvelope)
+	if !ok {
+		return
+	}
+
+	gr.mu.RLock()
+	g, ok := gr.protocols[ge.Protocol]
+	gr.mu.RUnlock()
+
+	if ok {
+		g.HandleInbound(from, ge)
+	}
+}
+
+// RegisterGossipHandler is a convenience for registering a single gossip
+// protocol with a dispatcher. For multiple protocols, use GossipRouter.
 func RegisterGossipHandler(d *InboundDispatcher, codec Codec, g *GossipProtocol) {
 	d.RegisterHandler("__gossip", func(from NodeID, env Envelope) {
 		var decoded any
