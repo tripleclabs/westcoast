@@ -3,6 +3,7 @@ package cluster
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/binary"
 	"encoding/gob"
 	"fmt"
@@ -29,18 +30,34 @@ func init() {
 //
 //	client → server: [4 bytes len]["HELO"][4 bytes len][node-id][4 bytes len][auth-credentials]
 //	server → client: [4 bytes len]["OK"] or connection closed on rejection
+// GRPCTransportConfig provides optional configuration for the transport.
+type GRPCTransportConfig struct {
+	// TLS enables TLS encryption on the transport. When non-nil, all
+	// connections (inbound and outbound) use TLS. The existing HELO/OK
+	// handshake runs inside the TLS connection.
+	// When nil, the transport operates in plaintext (default behaviour).
+	TLS *tls.Config
+}
+
 type GRPCTransport struct {
 	mu      sync.RWMutex
 	handler InboundHandler
 	localID NodeID
 	auth    ClusterAuth
+	tlsCfg  *tls.Config
 
 	listener net.Listener
 	closed   bool
 }
 
+// NewGRPCTransport creates a plaintext TCP transport.
 func NewGRPCTransport(localID NodeID) *GRPCTransport {
 	return &GRPCTransport{localID: localID}
+}
+
+// NewGRPCTransportWithConfig creates a transport with optional TLS.
+func NewGRPCTransportWithConfig(localID NodeID, cfg GRPCTransportConfig) *GRPCTransport {
+	return &GRPCTransport{localID: localID, tlsCfg: cfg.TLS}
 }
 
 func (t *GRPCTransport) Listen(addr string, handler InboundHandler) error {
@@ -55,6 +72,9 @@ func (t *GRPCTransport) Listen(addr string, handler InboundHandler) error {
 	lis, err := net.Listen("tcp", addr)
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrDialFailed, err)
+	}
+	if t.tlsCfg != nil {
+		lis = tls.NewListener(lis, t.tlsCfg)
 	}
 	t.listener = lis
 
@@ -154,8 +174,17 @@ func (t *GRPCTransport) Dial(ctx context.Context, addr string, auth ClusterAuth)
 	}
 	t.mu.RUnlock()
 
-	var d net.Dialer
-	raw, err := d.DialContext(ctx, "tcp", addr)
+	var (
+		raw net.Conn
+		err error
+	)
+	if t.tlsCfg != nil {
+		dialer := &tls.Dialer{Config: t.tlsCfg}
+		raw, err = dialer.DialContext(ctx, "tcp", addr)
+	} else {
+		var d net.Dialer
+		raw, err = d.DialContext(ctx, "tcp", addr)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrDialFailed, err)
 	}

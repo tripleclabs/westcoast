@@ -28,8 +28,8 @@ Zero external dependencies. Single Go module.
 ### Distributed Cluster (`src/actor/cluster`)
 
 - **Cluster formation**: pluggable `ClusterProvider` for node discovery. `FixedProvider` (static seed list with heartbeat failure detection) included. Multicast, K8s, Consul providers can be added.
-- **Transport**: pluggable `Transport` interface. TCP transport with length-prefixed gob frames, handshake-based authentication. gRPC or QUIC transports can be substituted.
-- **Authentication**: pluggable `ClusterAuth`. `SharedSecretAuth` (constant-time comparison) and `NoopAuth` included.
+- **Transport**: pluggable `Transport` interface. TCP transport with length-prefixed gob frames, handshake-based authentication, optional TLS encryption (via `GRPCTransportConfig`). gRPC or QUIC transports can be substituted.
+- **Authentication**: pluggable `ClusterAuth`. `SharedSecretAuth` (constant-time comparison), `CertAuth` (x509 certificate verification against a cluster CA), and `NoopAuth` included.
 - **Codec**: pluggable `Codec` for message serialization. `GobCodec` included.
 - **Ring topology**: consistent hash ring with configurable fanout and finger tables. O(log n) routing with bounded hop count. Connection count scales O(log n) vs O(n) for full mesh. `FullMeshTopology` also available for small clusters.
 - **Remote messaging**: transparent cross-node PID sends. `sendPIDWithSender` detects remote PIDs and routes through the transport layer. Ask/Reply works across nodes (node-qualified `__ask_reply@nodeID` namespaces).
@@ -360,7 +360,7 @@ Every distributed concern is behind an interface. Defaults work out of the box; 
 |---|---|---|
 | `ClusterProvider` | `FixedProvider` | Node discovery and failure detection |
 | `Transport` | TCP with gob frames | Inter-node communication |
-| `ClusterAuth` | `NoopAuth` | Connection authentication |
+| `ClusterAuth` | `NoopAuth` | Connection authentication (`SharedSecretAuth`, `CertAuth` also included) |
 | `Codec` | `GobCodec` | Message serialization |
 | `Topology` | `FullMeshTopology` | Connection decisions and message routing |
 | `RegistryStrategy` | (interface) | Distributed name registry |
@@ -442,6 +442,12 @@ type InboundHandler interface {
     OnConnectionEstablished(remote NodeID, conn Connection)
     OnConnectionLost(remote NodeID, err error)
 }
+
+// TLS-enabled transport:
+type GRPCTransportConfig struct {
+    TLS *tls.Config // nil = plaintext (default)
+}
+func NewGRPCTransportWithConfig(nodeID NodeID, cfg GRPCTransportConfig) *GRPCTransport
 ```
 
 ### ClusterProvider
@@ -463,6 +469,11 @@ type ClusterAuth interface {
     Verify(peerCredentials []byte) error
 }
 ```
+
+Built-in implementations:
+- `NoopAuth` — accepts all connections
+- `SharedSecretAuth` — pre-shared secret with constant-time comparison
+- `CertAuth` — x509 certificate verification against a cluster CA. Peer sends its DER-encoded certificate as credentials; verifier checks the certificate chain against the CA. Use with TLS-enabled transport for mTLS. `PeerNodeID(creds)` extracts the authenticated node ID from the certificate CN.
 
 ### Codec
 
