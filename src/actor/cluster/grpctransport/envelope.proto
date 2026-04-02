@@ -1,0 +1,61 @@
+syntax = "proto3";
+
+package grpctransport;
+
+option go_package = "github.com/tripleclabs/westcoast/src/actor/cluster/grpctransport";
+
+// ClusterEnvelope is the gRPC wire format for inter-node messages.
+// The payload field carries a gob-encoded actor message; all routing
+// metadata is in native proto fields so gateways, proxies, and
+// observability tools can inspect/route without decoding the payload.
+message ClusterEnvelope {
+  // Routing headers — arbitrary key/value pairs for gateway routing,
+  // tracing propagation, traffic shaping, etc.
+  map<string, string> headers = 1;
+
+  // Sender identification.
+  string sender_node    = 2;
+  string sender_actor_id = 3;
+
+  // Target identification.
+  string target_node     = 4;
+  string target_actor_id = 5;
+
+  // PID generation tracking.
+  string namespace  = 6;
+  uint64 generation = 7;
+
+  // Message metadata.
+  string type_name       = 8;
+  string schema_version  = 9;
+  uint64 message_id      = 10;
+
+  // Gob-encoded actor message payload.
+  bytes payload = 11;
+
+  // Ask/reply support.
+  bool          is_ask          = 12;
+  string        ask_request_id  = 13;
+  RemotePIDProto ask_reply_to   = 14; // nil when not an ask
+
+  // Timing.
+  int64 sent_at_unix_nano = 15;
+}
+
+// RemotePIDProto is the wire representation of a remote actor PID.
+message RemotePIDProto {
+  string node       = 1;
+  string namespace   = 2;
+  string actor_id    = 3;
+  uint64 generation  = 4;
+}
+
+// ClusterTransport is the gRPC service for inter-node communication.
+// Authentication is handled via gRPC metadata (HMAC-based shared secret)
+// and/or mTLS at the transport layer — not a separate RPC.
+service ClusterTransport {
+  // Stream opens a bidirectional envelope stream between two nodes.
+  // The caller's identity is established from metadata and the first
+  // envelope's sender_node field.
+  rpc Stream(stream ClusterEnvelope) returns (stream ClusterEnvelope);
+}

@@ -9,7 +9,7 @@ import (
 
 func TestMetadata_UpdateTags(t *testing.T) {
 	provider := NewFixedProvider(FixedProviderConfig{})
-	transport := NewGRPCTransport("node-1")
+	transport := NewTCPTransport("node-1")
 	c, _ := NewCluster(ClusterConfig{
 		Self:      NodeMeta{ID: "node-1", Addr: "127.0.0.1:0"},
 		Provider:  provider,
@@ -33,7 +33,7 @@ func TestMetadata_UpdateTags(t *testing.T) {
 
 func TestMetadata_RemoveTag(t *testing.T) {
 	provider := NewFixedProvider(FixedProviderConfig{})
-	transport := NewGRPCTransport("node-1")
+	transport := NewTCPTransport("node-1")
 	c, _ := NewCluster(ClusterConfig{
 		Self:      NodeMeta{ID: "node-1", Addr: "127.0.0.1:0"},
 		Provider:  provider,
@@ -55,7 +55,7 @@ func TestMetadata_RemoveTag(t *testing.T) {
 
 func TestMetadata_SelfReturnsCopy(t *testing.T) {
 	provider := NewFixedProvider(FixedProviderConfig{})
-	transport := NewGRPCTransport("node-1")
+	transport := NewTCPTransport("node-1")
 	c, _ := NewCluster(ClusterConfig{
 		Self:      NodeMeta{ID: "node-1", Addr: "127.0.0.1:0"},
 		Provider:  provider,
@@ -77,8 +77,8 @@ func TestMetadata_GossipPropagates(t *testing.T) {
 	ctx := context.Background()
 	codec := NewGobCodec()
 
-	transport1 := NewGRPCTransport("node-1")
-	transport2 := NewGRPCTransport("node-2")
+	transport1 := NewTCPTransport("node-1")
+	transport2 := NewTCPTransport("node-2")
 	provider1 := NewFixedProvider(FixedProviderConfig{})
 	provider2 := NewFixedProvider(FixedProviderConfig{})
 
@@ -165,8 +165,8 @@ func TestMetadata_MemberUpdatedEvent(t *testing.T) {
 	var mu sync.Mutex
 	var events []MemberEvent
 
-	transport1 := NewGRPCTransport("node-1")
-	transport2 := NewGRPCTransport("node-2")
+	transport1 := NewTCPTransport("node-1")
+	transport2 := NewTCPTransport("node-2")
 	provider1 := NewFixedProvider(FixedProviderConfig{})
 	provider2 := NewFixedProvider(FixedProviderConfig{})
 
@@ -256,7 +256,7 @@ func TestMetadata_MemberUpdatedEvent(t *testing.T) {
 
 func TestMetadata_SingleNodeWorks(t *testing.T) {
 	provider := NewFixedProvider(FixedProviderConfig{})
-	transport := NewGRPCTransport("solo")
+	transport := NewTCPTransport("solo")
 	c, _ := NewCluster(ClusterConfig{
 		Self:      NodeMeta{ID: "solo", Addr: "127.0.0.1:0"},
 		Provider:  provider,

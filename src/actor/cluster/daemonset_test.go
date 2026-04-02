@@ -94,8 +94,8 @@ func TestDaemonSet_SendTo_Remote(t *testing.T) {
 	codec := NewGobCodec()
 	codec.Register("")
 
-	transport1 := NewGRPCTransport("node-1")
-	transport2 := NewGRPCTransport("node-2")
+	transport1 := NewTCPTransport("node-1")
+	transport2 := NewTCPTransport("node-2")
 	provider1 := NewFixedProvider(FixedProviderConfig{})
 	provider2 := NewFixedProvider(FixedProviderConfig{})
 
@@ -167,8 +167,8 @@ func TestDaemonSet_AskTo_Remote(t *testing.T) {
 	codec.Register("")
 	codec.Register(actor.AskReplyEnvelope{})
 
-	transport1 := NewGRPCTransport("node-1")
-	transport2 := NewGRPCTransport("node-2")
+	transport1 := NewTCPTransport("node-1")
+	transport2 := NewTCPTransport("node-2")
 	provider1 := NewFixedProvider(FixedProviderConfig{})
 	provider2 := NewFixedProvider(FixedProviderConfig{})
 
@@ -273,8 +273,8 @@ func TestDaemonSet_Broadcast(t *testing.T) {
 	codec := NewGobCodec()
 	codec.Register("")
 
-	transport1 := NewGRPCTransport("node-1")
-	transport2 := NewGRPCTransport("node-2")
+	transport1 := NewTCPTransport("node-1")
+	transport2 := NewTCPTransport("node-2")
 	provider1 := NewFixedProvider(FixedProviderConfig{})
 	provider2 := NewFixedProvider(FixedProviderConfig{})
 
@@ -385,7 +385,7 @@ func TestDaemonSet_DrainStopsDaemons(t *testing.T) {
 	}
 
 	provider := NewFixedProvider(FixedProviderConfig{})
-	transport := NewGRPCTransport("node-1")
+	transport := NewTCPTransport("node-1")
 	c, _ := NewCluster(ClusterConfig{
 		Self:     NodeMeta{ID: "node-1", Addr: "127.0.0.1:0"},
 		Provider: provider, Transport: transport,

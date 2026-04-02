@@ -15,7 +15,7 @@ func TestCluster_TwoNodeFormation(t *testing.T) {
 	provider1 := NewFixedProvider(FixedProviderConfig{
 		HeartbeatInterval: 100 * time.Millisecond,
 	})
-	transport1 := NewGRPCTransport("node-1")
+	transport1 := NewTCPTransport("node-1")
 	cluster1, err := NewCluster(ClusterConfig{
 		Self:      NodeMeta{ID: "node-1", Addr: "127.0.0.1:0"},
 		Provider:  provider1,
@@ -39,7 +39,7 @@ func TestCluster_TwoNodeFormation(t *testing.T) {
 	provider2 := NewFixedProvider(FixedProviderConfig{
 		HeartbeatInterval: 100 * time.Millisecond,
 	})
-	transport2 := NewGRPCTransport("node-2")
+	transport2 := NewTCPTransport("node-2")
 	cluster2, err := NewCluster(ClusterConfig{
 		Self:      NodeMeta{ID: "node-2", Addr: "127.0.0.1:0"},
 		Provider:  provider2,
@@ -109,7 +109,7 @@ func TestCluster_MembershipEvents(t *testing.T) {
 	ctx := context.Background()
 
 	provider := NewFixedProvider(FixedProviderConfig{})
-	transport := NewGRPCTransport("node-1")
+	transport := NewTCPTransport("node-1")
 
 	c, err := NewCluster(ClusterConfig{
 		Self:      NodeMeta{ID: "node-1", Addr: "127.0.0.1:0"},
@@ -145,7 +145,7 @@ func TestCluster_SendToUnknownNodeFails(t *testing.T) {
 	ctx := context.Background()
 
 	provider := NewFixedProvider(FixedProviderConfig{})
-	transport := NewGRPCTransport("node-1")
+	transport := NewTCPTransport("node-1")
 
 	c, err := NewCluster(ClusterConfig{
 		Self:      NodeMeta{ID: "node-1", Addr: "127.0.0.1:0"},
@@ -170,7 +170,7 @@ func TestCluster_SendToUnknownNodeFails(t *testing.T) {
 
 func TestCluster_LocalNodeID(t *testing.T) {
 	provider := NewFixedProvider(FixedProviderConfig{})
-	transport := NewGRPCTransport("my-node")
+	transport := NewTCPTransport("my-node")
 
 	c, err := NewCluster(ClusterConfig{
 		Self:      NodeMeta{ID: "my-node", Addr: "127.0.0.1:0"},
@@ -193,7 +193,7 @@ func TestCluster_MultipleEnvelopesDelivered(t *testing.T) {
 	var received []Envelope
 
 	provider1 := NewFixedProvider(FixedProviderConfig{})
-	transport1 := NewGRPCTransport("node-1")
+	transport1 := NewTCPTransport("node-1")
 	c1, _ := NewCluster(ClusterConfig{
 		Self:      NodeMeta{ID: "node-1", Addr: "127.0.0.1:0"},
 		Provider:  provider1,
@@ -207,7 +207,7 @@ func TestCluster_MultipleEnvelopesDelivered(t *testing.T) {
 	_ = addr1
 
 	provider2 := NewFixedProvider(FixedProviderConfig{})
-	transport2 := NewGRPCTransport("node-2")
+	transport2 := NewTCPTransport("node-2")
 	c2, _ := NewCluster(ClusterConfig{
 		Self:      NodeMeta{ID: "node-2", Addr: "127.0.0.1:0"},
 		Provider:  provider2,
@@ -265,7 +265,7 @@ func TestCluster_MultipleEnvelopesDelivered(t *testing.T) {
 }
 
 func TestNewCluster_ValidationErrors(t *testing.T) {
-	transport := NewGRPCTransport("n")
+	transport := NewTCPTransport("n")
 	provider := NewFixedProvider(FixedProviderConfig{})
 
 	cases := []struct {

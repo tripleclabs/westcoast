@@ -56,7 +56,7 @@ func (h *testHandler) waitEnvelope(t *testing.T, timeout time.Duration) Envelope
 func TestTransport_DialAndSend(t *testing.T) {
 	ctx := context.Background()
 
-	serverTransport := NewGRPCTransport("server-node")
+	serverTransport := NewTCPTransport("server-node")
 	serverHandler := newTestHandler()
 
 	if err := serverTransport.Listen("127.0.0.1:0", serverHandler); err != nil {
@@ -66,7 +66,7 @@ func TestTransport_DialAndSend(t *testing.T) {
 
 	serverAddr := serverTransport.listener.Addr().String()
 
-	clientTransport := NewGRPCTransport("client-node")
+	clientTransport := NewTCPTransport("client-node")
 	defer clientTransport.Close()
 
 	conn, err := clientTransport.Dial(ctx, serverAddr, NoopAuth{})
@@ -99,7 +99,7 @@ func TestTransport_DialAndSend(t *testing.T) {
 func TestTransport_AuthRejection(t *testing.T) {
 	ctx := context.Background()
 
-	serverTransport := NewGRPCTransport("server-node")
+	serverTransport := NewTCPTransport("server-node")
 	serverTransport.SetAuth(NewSharedSecretAuth([]byte("correct-secret")))
 	serverHandler := newTestHandler()
 
@@ -109,7 +109,7 @@ func TestTransport_AuthRejection(t *testing.T) {
 	defer serverTransport.Close()
 	serverAddr := serverTransport.listener.Addr().String()
 
-	clientTransport := NewGRPCTransport("client-node")
+	clientTransport := NewTCPTransport("client-node")
 	defer clientTransport.Close()
 
 	_, err := clientTransport.Dial(ctx, serverAddr, NewSharedSecretAuth([]byte("wrong-secret")))
@@ -122,7 +122,7 @@ func TestTransport_AuthSuccess(t *testing.T) {
 	ctx := context.Background()
 	secret := []byte("shared-cookie")
 
-	serverTransport := NewGRPCTransport("server-node")
+	serverTransport := NewTCPTransport("server-node")
 	serverTransport.SetAuth(NewSharedSecretAuth(secret))
 	serverHandler := newTestHandler()
 
@@ -132,7 +132,7 @@ func TestTransport_AuthSuccess(t *testing.T) {
 	defer serverTransport.Close()
 	serverAddr := serverTransport.listener.Addr().String()
 
-	clientTransport := NewGRPCTransport("client-node")
+	clientTransport := NewTCPTransport("client-node")
 	defer clientTransport.Close()
 
 	conn, err := clientTransport.Dial(ctx, serverAddr, NewSharedSecretAuth(secret))
@@ -154,7 +154,7 @@ func TestTransport_AuthSuccess(t *testing.T) {
 func TestTransport_MultipleEnvelopes(t *testing.T) {
 	ctx := context.Background()
 
-	serverTransport := NewGRPCTransport("server-node")
+	serverTransport := NewTCPTransport("server-node")
 	serverHandler := newTestHandler()
 	if err := serverTransport.Listen("127.0.0.1:0", serverHandler); err != nil {
 		t.Fatalf("listen: %v", err)
@@ -162,7 +162,7 @@ func TestTransport_MultipleEnvelopes(t *testing.T) {
 	defer serverTransport.Close()
 	serverAddr := serverTransport.listener.Addr().String()
 
-	clientTransport := NewGRPCTransport("client-node")
+	clientTransport := NewTCPTransport("client-node")
 	defer clientTransport.Close()
 
 	conn, err := clientTransport.Dial(ctx, serverAddr, NoopAuth{})
@@ -197,7 +197,7 @@ func TestTransport_MultipleEnvelopes(t *testing.T) {
 func TestTransport_ConnectionEstablishedCallback(t *testing.T) {
 	ctx := context.Background()
 
-	serverTransport := NewGRPCTransport("server-node")
+	serverTransport := NewTCPTransport("server-node")
 	serverHandler := newTestHandler()
 	if err := serverTransport.Listen("127.0.0.1:0", serverHandler); err != nil {
 		t.Fatalf("listen: %v", err)
@@ -205,7 +205,7 @@ func TestTransport_ConnectionEstablishedCallback(t *testing.T) {
 	defer serverTransport.Close()
 	serverAddr := serverTransport.listener.Addr().String()
 
-	clientTransport := NewGRPCTransport("client-node")
+	clientTransport := NewTCPTransport("client-node")
 	defer clientTransport.Close()
 
 	conn, err := clientTransport.Dial(ctx, serverAddr, NoopAuth{})
@@ -227,7 +227,7 @@ func TestTransport_ConnectionEstablishedCallback(t *testing.T) {
 }
 
 func TestTransport_ClosedTransportRejectsDial(t *testing.T) {
-	tr := NewGRPCTransport("node-1")
+	tr := NewTCPTransport("node-1")
 	tr.Close()
 
 	_, err := tr.Dial(context.Background(), "127.0.0.1:9999", NoopAuth{})

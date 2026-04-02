@@ -13,7 +13,7 @@ func TestClusterRouter_WithWorkerFilter(t *testing.T) {
 	ctx := context.Background()
 
 	provider := NewFixedProvider(FixedProviderConfig{})
-	transport := NewGRPCTransport("node-1")
+	transport := NewTCPTransport("node-1")
 	c, _ := NewCluster(ClusterConfig{
 		Self:     NodeMeta{ID: "node-1", Addr: "127.0.0.1:0", Tags: map[string]string{"region": "us-east-1", "gpus": "4"}},
 		Provider: provider, Transport: transport,
@@ -51,7 +51,7 @@ func TestClusterRouter_Nearest(t *testing.T) {
 	ctx := context.Background()
 
 	provider := NewFixedProvider(FixedProviderConfig{})
-	transport := NewGRPCTransport("node-1")
+	transport := NewTCPTransport("node-1")
 	c, _ := NewCluster(ClusterConfig{
 		Self:     NodeMeta{ID: "node-1", Addr: "127.0.0.1:0", Tags: map[string]string{"region": "eu-west-1", "az": "eu-west-1a"}},
 		Provider: provider, Transport: transport,
@@ -118,7 +118,7 @@ func TestClusterRouter_PreferTag(t *testing.T) {
 	ctx := context.Background()
 
 	provider := NewFixedProvider(FixedProviderConfig{})
-	transport := NewGRPCTransport("node-1")
+	transport := NewTCPTransport("node-1")
 	c, _ := NewCluster(ClusterConfig{
 		Self:     NodeMeta{ID: "node-1", Addr: "127.0.0.1:0", Tags: map[string]string{"memory-gb": "64"}},
 		Provider: provider, Transport: transport,
@@ -153,7 +153,7 @@ func TestClusterRouter_FilterAndPreferenceCombined(t *testing.T) {
 	ctx := context.Background()
 
 	provider := NewFixedProvider(FixedProviderConfig{})
-	transport := NewGRPCTransport("node-1")
+	transport := NewTCPTransport("node-1")
 	c, _ := NewCluster(ClusterConfig{
 		Self:     NodeMeta{ID: "node-1", Addr: "127.0.0.1:0", Tags: map[string]string{"region": "eu-west-1", "gpus": "8"}},
 		Provider: provider, Transport: transport,

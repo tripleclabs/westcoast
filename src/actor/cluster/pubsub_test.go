@@ -63,8 +63,8 @@ func TestPubSub_CrossNodeDirectBroadcast(t *testing.T) {
 	codec.Register(brokerRemotePublishCmd{})
 
 	// Build 2-node cluster.
-	transport1 := NewGRPCTransport("node-1")
-	transport2 := NewGRPCTransport("node-2")
+	transport1 := NewTCPTransport("node-1")
+	transport2 := NewTCPTransport("node-2")
 	provider1 := NewFixedProvider(FixedProviderConfig{})
 	provider2 := NewFixedProvider(FixedProviderConfig{})
 
@@ -175,8 +175,8 @@ func TestPubSub_NoRebroadcastLoop(t *testing.T) {
 	codec.Register(actor.BrokerPublishedMessage{})
 	codec.Register(pubsubBroadcastMsg{})
 
-	transport1 := NewGRPCTransport("node-1")
-	transport2 := NewGRPCTransport("node-2")
+	transport1 := NewTCPTransport("node-1")
+	transport2 := NewTCPTransport("node-2")
 	provider1 := NewFixedProvider(FixedProviderConfig{})
 	provider2 := NewFixedProvider(FixedProviderConfig{})
 
@@ -281,7 +281,7 @@ func TestDirectPubSubAdapter_HandleInbound(t *testing.T) {
 	codec.Register(pubsubBroadcastMsg{})
 	codec.Register("")
 
-	transport := NewGRPCTransport("n1")
+	transport := NewTCPTransport("n1")
 	provider := NewFixedProvider(FixedProviderConfig{})
 	c, _ := NewCluster(ClusterConfig{
 		Self:     NodeMeta{ID: "n1", Addr: "127.0.0.1:0"},

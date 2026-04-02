@@ -65,7 +65,7 @@ func setupTwoNodeCluster(t *testing.T) (rt1, rt2 *actor.Runtime, c1, c2 *Cluster
 	codec.Register(map[string]any{})
 
 	// Create transports and clusters.
-	transport1 := NewGRPCTransport("node-1")
+	transport1 := NewTCPTransport("node-1")
 	provider1 := NewFixedProvider(FixedProviderConfig{})
 	c1, err := NewCluster(ClusterConfig{
 		Self:      NodeMeta{ID: "node-1", Addr: "127.0.0.1:0"},
@@ -78,7 +78,7 @@ func setupTwoNodeCluster(t *testing.T) (rt1, rt2 *actor.Runtime, c1, c2 *Cluster
 		t.Fatalf("new cluster1: %v", err)
 	}
 
-	transport2 := NewGRPCTransport("node-2")
+	transport2 := NewTCPTransport("node-2")
 	provider2 := NewFixedProvider(FixedProviderConfig{})
 	c2, err = NewCluster(ClusterConfig{
 		Self:      NodeMeta{ID: "node-2", Addr: "127.0.0.1:0"},
@@ -179,8 +179,8 @@ func TestRemote_CrossNodeSend(t *testing.T) {
 	codec.Register("")
 
 	// Set up two transports.
-	transport1 := NewGRPCTransport("node-1")
-	transport2 := NewGRPCTransport("node-2")
+	transport1 := NewTCPTransport("node-1")
+	transport2 := NewTCPTransport("node-2")
 	provider1 := NewFixedProvider(FixedProviderConfig{})
 	provider2 := NewFixedProvider(FixedProviderConfig{})
 
@@ -267,8 +267,8 @@ func TestRemote_CrossNodeAskReply(t *testing.T) {
 	codec.Register("")
 	codec.Register(map[string]any{})
 
-	transport1 := NewGRPCTransport("node-1")
-	transport2 := NewGRPCTransport("node-2")
+	transport1 := NewTCPTransport("node-1")
+	transport2 := NewTCPTransport("node-2")
 	provider1 := NewFixedProvider(FixedProviderConfig{})
 	provider2 := NewFixedProvider(FixedProviderConfig{})
 

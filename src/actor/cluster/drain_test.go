@@ -16,7 +16,7 @@ func TestDrain_NotifiesPeers(t *testing.T) {
 	var events []MemberEvent
 
 	provider := NewFixedProvider(FixedProviderConfig{})
-	transport := NewGRPCTransport("node-1")
+	transport := NewTCPTransport("node-1")
 	c, _ := NewCluster(ClusterConfig{
 		Self:      NodeMeta{ID: "node-1", Addr: "127.0.0.1:0"},
 		Provider:  provider,
@@ -71,7 +71,7 @@ func TestDrain_StopsSingletons(t *testing.T) {
 	}
 
 	provider := NewFixedProvider(FixedProviderConfig{})
-	transport := NewGRPCTransport("node-1")
+	transport := NewTCPTransport("node-1")
 	c, _ := NewCluster(ClusterConfig{
 		Self:      NodeMeta{ID: "node-1", Addr: "127.0.0.1:0"},
 		Provider:  provider,
@@ -100,7 +100,7 @@ func TestDrain_DeregistersNames(t *testing.T) {
 	registry.Register("svc-c", actor.PID{Namespace: "node-2", ActorID: "c", Generation: 1}) // different node
 
 	provider := NewFixedProvider(FixedProviderConfig{})
-	transport := NewGRPCTransport("node-1")
+	transport := NewTCPTransport("node-1")
 	c, _ := NewCluster(ClusterConfig{
 		Self:      NodeMeta{ID: "node-1", Addr: "127.0.0.1:0"},
 		Provider:  provider,

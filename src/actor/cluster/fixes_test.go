@@ -14,7 +14,7 @@ import (
 
 func TestFix2_SetOnMemberEvent_Concurrent(t *testing.T) {
 	provider := NewFixedProvider(FixedProviderConfig{})
-	transport := NewGRPCTransport("node-1")
+	transport := NewTCPTransport("node-1")
 	c, _ := NewCluster(ClusterConfig{
 		Self:      NodeMeta{ID: "node-1", Addr: "127.0.0.1:0"},
 		Provider:  provider,
@@ -52,7 +52,7 @@ func TestFix3_GossipPubSubAdapter_BufferFull(t *testing.T) {
 	codec.Register("")
 
 	provider := NewFixedProvider(FixedProviderConfig{})
-	transport := NewGRPCTransport("node-1")
+	transport := NewTCPTransport("node-1")
 	c, _ := NewCluster(ClusterConfig{
 		Self:      NodeMeta{ID: "node-1", Addr: "127.0.0.1:0"},
 		Provider:  provider,
@@ -137,7 +137,7 @@ func TestFix7_Supervisor_NoPhantomDecisions(t *testing.T) {
 	election.SetMembers([]NodeMeta{{ID: "node-1"}, {ID: "node-2"}, {ID: "node-3"}})
 
 	provider := NewFixedProvider(FixedProviderConfig{})
-	transport := NewGRPCTransport("node-1")
+	transport := NewTCPTransport("node-1")
 	c, _ := NewCluster(ClusterConfig{
 		Self:      NodeMeta{ID: "node-1", Addr: "127.0.0.1:0"},
 		Provider:  provider,

@@ -17,10 +17,8 @@ func init() {
 	gob.Register(RemotePID{})
 }
 
-// GRPCTransport implements Transport using persistent TCP connections with
-// length-prefixed gob-encoded frames. Despite the name (retained for API
-// compatibility), this is a raw TCP transport — simpler and more predictable
-// than gRPC streaming for actor message passing.
+// TCPTransport implements Transport using persistent TCP connections with
+// length-prefixed gob-encoded frames.
 //
 // Wire protocol:
 //
@@ -30,8 +28,8 @@ func init() {
 //
 //	client → server: [4 bytes len]["HELO"][4 bytes len][node-id][4 bytes len][auth-credentials]
 //	server → client: [4 bytes len]["OK"] or connection closed on rejection
-// GRPCTransportConfig provides optional configuration for the transport.
-type GRPCTransportConfig struct {
+// TCPTransportConfig provides optional configuration for the transport.
+type TCPTransportConfig struct {
 	// TLS enables TLS encryption on the transport. When non-nil, all
 	// connections (inbound and outbound) use TLS. The existing HELO/OK
 	// handshake runs inside the TLS connection.
@@ -39,7 +37,7 @@ type GRPCTransportConfig struct {
 	TLS *tls.Config
 }
 
-type GRPCTransport struct {
+type TCPTransport struct {
 	mu      sync.RWMutex
 	handler InboundHandler
 	localID NodeID
@@ -50,17 +48,17 @@ type GRPCTransport struct {
 	closed   bool
 }
 
-// NewGRPCTransport creates a plaintext TCP transport.
-func NewGRPCTransport(localID NodeID) *GRPCTransport {
-	return &GRPCTransport{localID: localID}
+// NewTCPTransport creates a plaintext TCP transport.
+func NewTCPTransport(localID NodeID) *TCPTransport {
+	return &TCPTransport{localID: localID}
 }
 
-// NewGRPCTransportWithConfig creates a transport with optional TLS.
-func NewGRPCTransportWithConfig(localID NodeID, cfg GRPCTransportConfig) *GRPCTransport {
-	return &GRPCTransport{localID: localID, tlsCfg: cfg.TLS}
+// NewTCPTransportWithConfig creates a transport with optional TLS.
+func NewTCPTransportWithConfig(localID NodeID, cfg TCPTransportConfig) *TCPTransport {
+	return &TCPTransport{localID: localID, tlsCfg: cfg.TLS}
 }
 
-func (t *GRPCTransport) Listen(addr string, handler InboundHandler) error {
+func (t *TCPTransport) Listen(addr string, handler InboundHandler) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -82,7 +80,7 @@ func (t *GRPCTransport) Listen(addr string, handler InboundHandler) error {
 	return nil
 }
 
-func (t *GRPCTransport) acceptLoop(lis net.Listener) {
+func (t *TCPTransport) acceptLoop(lis net.Listener) {
 	for {
 		raw, err := lis.Accept()
 		if err != nil {
@@ -92,7 +90,7 @@ func (t *GRPCTransport) acceptLoop(lis net.Listener) {
 	}
 }
 
-func (t *GRPCTransport) handleInbound(raw net.Conn) {
+func (t *TCPTransport) handleInbound(raw net.Conn) {
 	// Handshake: read HELO, node ID, auth credentials.
 	magic, err := readFrame(raw)
 	if err != nil || string(magic) != "HELO" {
@@ -166,7 +164,7 @@ func (t *GRPCTransport) handleInbound(raw net.Conn) {
 	}
 }
 
-func (t *GRPCTransport) Dial(ctx context.Context, addr string, auth ClusterAuth) (Connection, error) {
+func (t *TCPTransport) Dial(ctx context.Context, addr string, auth ClusterAuth) (Connection, error) {
 	t.mu.RLock()
 	if t.closed {
 		t.mu.RUnlock()
@@ -226,7 +224,7 @@ func (t *GRPCTransport) Dial(ctx context.Context, addr string, auth ClusterAuth)
 	}, nil
 }
 
-func (t *GRPCTransport) Close() error {
+func (t *TCPTransport) Close() error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.closed = true
@@ -237,7 +235,7 @@ func (t *GRPCTransport) Close() error {
 }
 
 // SetAuth sets the auth handler for verifying inbound connections.
-func (t *GRPCTransport) SetAuth(auth ClusterAuth) {
+func (t *TCPTransport) SetAuth(auth ClusterAuth) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.auth = auth

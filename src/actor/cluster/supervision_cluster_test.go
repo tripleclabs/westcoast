@@ -17,7 +17,7 @@ func TestClusterSupervisor_LeaderHandlesFailure(t *testing.T) {
 
 	// Set up a minimal cluster (provider only, no transport needed for this test).
 	provider := NewFixedProvider(FixedProviderConfig{})
-	transport := NewGRPCTransport("node-1")
+	transport := NewTCPTransport("node-1")
 	c, _ := NewCluster(ClusterConfig{
 		Self:      NodeMeta{ID: "node-1", Addr: "127.0.0.1:0"},
 		Provider:  provider,
@@ -105,7 +105,7 @@ func TestClusterSupervisor_NonLeaderIgnores(t *testing.T) {
 	election.SetMembers([]NodeMeta{{ID: "node-1"}, {ID: "node-2"}, {ID: "node-3"}})
 
 	provider := NewFixedProvider(FixedProviderConfig{})
-	transport := NewGRPCTransport("node-2")
+	transport := NewTCPTransport("node-2")
 	c, _ := NewCluster(ClusterConfig{
 		Self:      NodeMeta{ID: "node-2", Addr: "127.0.0.1:0"},
 		Provider:  provider,

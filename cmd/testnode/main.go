@@ -67,7 +67,7 @@ func main() {
 		seeds = append(seeds, cluster.NodeMeta{ID: cluster.NodeID(parts[0]), Addr: parts[1]})
 	}
 
-	transport := cluster.NewGRPCTransport(cluster.NodeID(nodeID))
+	transport := cluster.NewTCPTransport(cluster.NodeID(nodeID))
 	provider := cluster.NewFixedProvider(cluster.FixedProviderConfig{
 		Seeds:             seeds,
 		HeartbeatInterval: 2 * time.Second,

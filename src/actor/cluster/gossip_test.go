@@ -14,8 +14,8 @@ func TestGossipProtocol_ProducesAndSends(t *testing.T) {
 
 	// Set up a 2-node cluster.
 	codec := NewGobCodec()
-	transport1 := NewGRPCTransport("node-1")
-	transport2 := NewGRPCTransport("node-2")
+	transport1 := NewTCPTransport("node-1")
+	transport2 := NewTCPTransport("node-2")
 	provider1 := NewFixedProvider(FixedProviderConfig{})
 	provider2 := NewFixedProvider(FixedProviderConfig{})
 
@@ -147,8 +147,8 @@ func TestRegistryGossip_ConvergesViaGossip(t *testing.T) {
 	codec.Register(actor.PID{})
 
 	// Set up 2-node cluster.
-	transport1 := NewGRPCTransport("node-1")
-	transport2 := NewGRPCTransport("node-2")
+	transport1 := NewTCPTransport("node-1")
+	transport2 := NewTCPTransport("node-2")
 	provider1 := NewFixedProvider(FixedProviderConfig{})
 	provider2 := NewFixedProvider(FixedProviderConfig{})
 
