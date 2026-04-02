@@ -27,7 +27,7 @@ Zero external dependencies. Single Go module.
 
 ### Distributed Cluster (`src/actor/cluster`)
 
-- **Cluster formation**: pluggable `ClusterProvider` for node discovery. `FixedProvider` (static seed list with heartbeat failure detection) included. Multicast, K8s, Consul providers can be added.
+- **Cluster formation**: pluggable `ClusterProvider` for node discovery. `FixedProvider` (static seed list with heartbeat failure detection) built-in. Optional provider modules in `pkg/`: `multicastprovider` (UDP LAN discovery), `awsprovider` (EC2 tags/ASG), `gcpprovider` (GCE instances), `azureprovider` (Azure VMs). Each is a separate Go module — `go get` only pulls the SDK you need.
 - **Transport**: pluggable `Transport` interface. `TCPTransport` with length-prefixed gob frames, handshake-based authentication, optional TLS encryption (via `TCPTransportConfig`). `grpctransport.GRPCTransport` with protobuf envelopes, bidirectional streaming, gateway-friendly routing headers, and gob-encoded payloads. QUIC transports can be substituted.
 - **Authentication**: pluggable `ClusterAuth`. `SharedSecretAuth` (constant-time comparison), `CertAuth` (x509 certificate verification against a cluster CA), and `NoopAuth` included.
 - **Codec**: pluggable `Codec` for message serialization. `GobCodec` included.
@@ -493,6 +493,28 @@ type ClusterProvider interface {
     Members() []NodeMeta
     Events() <-chan MemberEvent
 }
+```
+
+Provider modules (separate `go get`):
+
+```go
+// LAN multicast discovery (dev / bare metal):
+import "github.com/tripleclabs/westcoast/pkg/multicastprovider"
+provider := multicastprovider.New()
+
+// AWS EC2 — uses IAM role, discovers by tags:
+import "github.com/tripleclabs/westcoast/pkg/awsprovider"
+provider := awsprovider.NewWithConfig(awsprovider.Config{
+    TagFilters: map[string]string{"cluster": "prod"},
+})
+
+// GCP — discovers instances in a zone:
+import "github.com/tripleclabs/westcoast/pkg/gcpprovider"
+provider := gcpprovider.New("my-project", "us-central1-a")
+
+// Azure — discovers VMs in a resource group:
+import "github.com/tripleclabs/westcoast/pkg/azureprovider"
+provider := azureprovider.New("subscription-id", "my-resource-group")
 ```
 
 ### ClusterAuth

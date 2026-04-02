@@ -1,0 +1,10 @@
+go 1.26.1
+
+use (
+	.
+	./pkg/awsprovider
+	./pkg/azureprovider
+	./pkg/gcpprovider
+	./pkg/multicastprovider
+	./pkg/providerutil
+)
