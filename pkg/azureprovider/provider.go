@@ -56,6 +56,12 @@ func (c *Config) setDefaults() {
 	if c.Port <= 0 {
 		c.Port = 9000
 	}
+	if c.PollInterval <= 0 {
+		c.PollInterval = 10 * time.Second
+	}
+	if c.FailureThreshold <= 0 {
+		c.FailureThreshold = 3
+	}
 	if c.AddrFunc == nil {
 		port := c.Port
 		c.AddrFunc = func(ip string, _ VMInfo) string {
@@ -156,7 +162,11 @@ func (a *AzureProvider) discoverFunc() providerutil.DiscoverFunc {
 				continue
 			}
 
-			tags := make(map[string]string)
+			tags := make(map[string]string, len(vm.Tags)+4)
+			// User tags first so cloud.* keys always win.
+			for k, v := range vm.Tags {
+				tags[k] = v
+			}
 			tags["cloud.provider"] = "azure"
 			if vm.Location != "" {
 				tags["cloud.region"] = vm.Location
@@ -166,11 +176,6 @@ func (a *AzureProvider) discoverFunc() providerutil.DiscoverFunc {
 			}
 			if vm.VMSize != "" {
 				tags["cloud.instance-type"] = vm.VMSize
-			}
-
-			// Merge user-facing Azure tags.
-			for k, v := range vm.Tags {
-				tags[k] = v
 			}
 
 			members = append(members, cluster.NodeMeta{

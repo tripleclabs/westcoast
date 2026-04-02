@@ -162,9 +162,10 @@ func (p *AWSProvider) buildDiscover(client InstanceLister) providerutil.Discover
 			tags["cloud.instance-type"] = inst.InstanceType
 
 			members = append(members, cluster.NodeMeta{
-				ID:   cfg.NodeIDFrom(inst),
-				Addr: cfg.AddrFunc(inst.PrivateIP, inst),
-				Tags: tags,
+				ID:       cfg.NodeIDFrom(inst),
+				Addr:     cfg.AddrFunc(inst.PrivateIP, inst),
+				Tags:     tags,
+				JoinedAt: time.Now(),
 			})
 		}
 		return members, nil

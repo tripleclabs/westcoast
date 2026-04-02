@@ -45,8 +45,8 @@ func (c *PollerConfig) setDefaults() {
 
 // peerState tracks a discovered node across polling cycles.
 type peerState struct {
-	meta             cluster.NodeMeta
-	alive            bool
+	meta              cluster.NodeMeta
+	alive             bool
 	consecutiveMisses int
 }
 

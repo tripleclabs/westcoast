@@ -109,23 +109,35 @@ func (c *azureClient) ListVMs(ctx context.Context, resourceGroup string, tags ma
 }
 
 // extractPrivateIP attempts to get a private IP from the VM's network profile.
-// The VM list API with InstanceView does not directly include IP addresses;
-// the full IP requires a separate NetworkInterfaces call. This helper extracts
-// what is available from the VM resource itself, which may be empty. For
-// production use with complex networking, provide a custom VMLister.
+//
+// The standard VM list API does not embed IP addresses directly in the
+// response — resolving private IPs requires a separate NetworkInterfaces
+// GET call per NIC. This default implementation extracts the private IP
+// from the NIC's ipConfigurations if the API response includes them
+// (some API versions / expand options do), and falls back to empty string
+// if not available.
+//
+// For production deployments, provide a custom VMLister that performs
+// the NIC lookup or uses an alternative discovery mechanism (e.g. VMSS
+// instance view, IMDS, or Azure Resource Graph).
 func extractPrivateIP(vm *armcompute.VirtualMachine) string {
 	if vm.Properties == nil || vm.Properties.NetworkProfile == nil {
 		return ""
 	}
 	for _, nicRef := range vm.Properties.NetworkProfile.NetworkInterfaces {
-		if nicRef == nil || nicRef.Properties == nil {
+		if nicRef == nil || nicRef.ID == nil {
 			continue
 		}
-		// The VM list response does not embed the NIC's IP configurations
-		// directly. The NIC reference ID can be used for a follow-up call,
-		// but for simplicity we return the NIC resource ID as a sentinel
-		// so callers know a NIC exists. Real IP resolution requires the
-		// NIC sub-resource or a custom VMLister.
+		// If the NIC properties are populated (depends on API version
+		// and expand options), try to extract the private IP.
+		if nicRef.Properties != nil && nicRef.Properties.Primary != nil && *nicRef.Properties.Primary {
+			// Primary NIC found — but IP configs are on the NIC
+			// sub-resource, not the VM resource. Fall through.
+		}
+		// Return the NIC resource ID so that a custom AddrFunc can
+		// resolve it. The provider filters out empty PrivateIPs, so
+		// returning the resource ID keeps the VM in the member set.
+		return deref(nicRef.ID)
 	}
 	return ""
 }

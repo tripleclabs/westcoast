@@ -111,18 +111,27 @@ func (p *GCPProvider) Start(self cluster.NodeMeta) error {
 // Stop halts polling and closes the event channel.
 // Implements cluster.ClusterProvider.
 func (p *GCPProvider) Stop() error {
+	if p.poller == nil {
+		return cluster.ErrProviderNotStarted
+	}
 	return p.poller.Stop()
 }
 
 // Members returns the current set of alive peers.
 // Implements cluster.ClusterProvider.
 func (p *GCPProvider) Members() []cluster.NodeMeta {
+	if p.poller == nil {
+		return nil
+	}
 	return p.poller.Members()
 }
 
 // Events returns the membership event channel.
 // Implements cluster.ClusterProvider.
 func (p *GCPProvider) Events() <-chan cluster.MemberEvent {
+	if p.poller == nil {
+		return nil
+	}
 	return p.poller.Events()
 }
 
@@ -171,14 +180,14 @@ func (p *GCPProvider) addr(info InstanceInfo) string {
 }
 
 func (p *GCPProvider) buildTags(info InstanceInfo) map[string]string {
-	tags := map[string]string{
-		"cloud.provider":      "gcp",
-		"cloud.zone":          info.Zone,
-		"cloud.instance-id":   info.ID,
-		"cloud.instance-type": info.MachineType,
-	}
+	tags := make(map[string]string, len(info.Labels)+4)
+	// User labels first so cloud.* keys always win.
 	for k, v := range info.Labels {
 		tags[k] = v
 	}
+	tags["cloud.provider"] = "gcp"
+	tags["cloud.zone"] = info.Zone
+	tags["cloud.instance-id"] = info.ID
+	tags["cloud.instance-type"] = info.MachineType
 	return tags
 }
