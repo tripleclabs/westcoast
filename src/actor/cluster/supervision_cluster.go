@@ -18,7 +18,7 @@ const clusterSupervisorScope = "cluster_supervisor"
 type ClusterSupervisor struct {
 	election LeaderElection
 	cluster  *Cluster
-	registry *CRDTRegistry // for looking up actor names by node
+	registry *DistributedRegistry // for looking up actor names by node
 	policy   ClusterSupervisionPolicy
 	scope    string
 
@@ -31,7 +31,7 @@ type ClusterSupervisor struct {
 type ClusterSupervisorConfig struct {
 	Election LeaderElection
 	Cluster  *Cluster
-	Registry *CRDTRegistry
+	Registry *DistributedRegistry
 	Policy   ClusterSupervisionPolicy
 	// Scope for the leader election. Defaults to "cluster_supervisor".
 	Scope string

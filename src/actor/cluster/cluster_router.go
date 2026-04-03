@@ -6,13 +6,11 @@ import (
 	"hash/fnv"
 	"math/rand"
 	"sort"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/tripleclabs/westcoast/src/actor"
-	"github.com/tripleclabs/westcoast/src/crdt"
 )
 
 const serviceGroupPrefix = "svcgroup:"
@@ -25,8 +23,8 @@ const serviceGroupPrefix = "svcgroup:"
 // preferences (SendWith/AskWith) for locality-aware routing.
 type ClusterRouter struct {
 	runtime  *actor.Runtime
-	registry *CRDTRegistry
-	cluster  *Cluster // optional, needed for metadata-based routing
+	registry *DistributedRegistry // service group membership (separate from name registry)
+	cluster  *Cluster             // optional, needed for metadata-based routing
 
 	mu      sync.RWMutex
 	routers map[string]*clusterRouterState
@@ -41,7 +39,7 @@ type clusterRouterState struct {
 
 // NewClusterRouter creates a cluster router. The cluster parameter is
 // optional — only needed for metadata-based filtering and preferences.
-func NewClusterRouter(runtime *actor.Runtime, registry *CRDTRegistry, cluster ...*Cluster) *ClusterRouter {
+func NewClusterRouter(runtime *actor.Runtime, registry *DistributedRegistry, cluster ...*Cluster) *ClusterRouter {
 	cr := &ClusterRouter{
 		runtime:  runtime,
 		registry: registry,
@@ -81,27 +79,26 @@ func (cr *ClusterRouter) Configure(serviceName string, strategy actor.RouterStra
 // Join adds a worker PID to a service group.
 func (cr *ClusterRouter) Join(serviceName string, pid actor.PID) error {
 	key := serviceGroupKey(serviceName, pid)
-	return cr.registry.set.Add(key, pid)
+	return cr.registry.Register(key, pid)
 }
 
 // Leave removes a worker PID from a service group.
 func (cr *ClusterRouter) Leave(serviceName string, pid actor.PID) {
 	key := serviceGroupKey(serviceName, pid)
-	cr.registry.set.Remove(key)
+	cr.registry.Unregister(key)
 }
 
 // Members returns all worker PIDs in a service group, after applying
 // the static filter if one is configured.
 func (cr *ClusterRouter) Members(serviceName string) []actor.PID {
 	prefix := serviceGroupPrefix + serviceName + ":"
-	entries := cr.registry.set.Filter(func(e crdt.Entry) bool {
-		return strings.HasPrefix(e.Key, prefix)
+	var pids []actor.PID
+	cr.registry.Range(func(name string, pid actor.PID) bool {
+		if len(name) > len(prefix) && name[:len(prefix)] == prefix {
+			pids = append(pids, pid)
+		}
+		return true
 	})
-
-	pids := make([]actor.PID, len(entries))
-	for i, e := range entries {
-		pids[i] = e.Value.(actor.PID)
-	}
 
 	// Apply static filter if configured.
 	cr.mu.RLock()

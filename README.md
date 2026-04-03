@@ -34,7 +34,7 @@ Zero external dependencies. Single Go module.
 - **Ring topology**: consistent hash ring with configurable fanout and finger tables. O(log n) routing with bounded hop count. Connection count scales O(log n) vs O(n) for full mesh. `FullMeshTopology` also available for small clusters.
 - **Remote messaging**: transparent cross-node PID sends. `sendPIDWithSender` detects remote PIDs and routes through the transport layer. Ask/Reply works across nodes (node-qualified `__ask_reply@nodeID` namespaces).
 - **Distributed registry** (two strategies):
-  - `CRDTRegistry`: eventually consistent, backed by `crdt.ORSet`. Digest-based anti-entropy gossip with tombstone compaction. Add-wins OR-Set semantics with LWW conflict resolution and deterministic tiebreak.
+  - `DistributedRegistry`: eventually consistent, backed by `crdt.ORSet`. Digest-based anti-entropy gossip with tombstone compaction. Add-wins OR-Set semantics with LWW conflict resolution and deterministic tiebreak.
 - **Distributed PubSub** (Phoenix.PubSub model): subscriptions stay local, publications broadcast to all nodes. `DirectPubSubAdapter` (fan-out to all) and `GossipPubSubAdapter` (epidemic gossip) included. No re-broadcast loops.
 - **Leader election**: `RingElection` — deterministic from membership (hash-based, no voting protocol). Scoped elections (multiple independent elections concurrently). Monotonically increasing terms for fencing.
 - **Cluster supervision**: user-space `ClusterSupervisor` that watches for node failures, uses leader election for single-decision-maker semantics, and delegates to a pluggable `ClusterSupervisionPolicy` for placement decisions. `SimpleRestartPolicy` included.
@@ -654,7 +654,7 @@ type PlacementDecision struct {
 ```go
 type ClusterRouter struct { ... }
 
-func NewClusterRouter(runtime *actor.Runtime, registry *CRDTRegistry, cluster ...*Cluster) *ClusterRouter
+func NewClusterRouter(runtime *actor.Runtime, registry *DistributedRegistry, cluster ...*Cluster) *ClusterRouter
 func (cr *ClusterRouter) Configure(serviceName string, strategy actor.RouterStrategy, opts ...RouterOption)
 func (cr *ClusterRouter) Join(serviceName string, pid actor.PID) error
 func (cr *ClusterRouter) Leave(serviceName string, pid actor.PID)
@@ -717,7 +717,7 @@ type DrainConfig struct {
 // Options:
 func WithSingletonManager(sm *SingletonManager) DrainOption
 func WithDaemonSetManager(dm *DaemonSetManager) DrainOption
-func WithRegistry(r *CRDTRegistry) DrainOption
+func WithRegistry(r *DistributedRegistry) DrainOption
 ```
 
 ## Feature Specs

@@ -28,7 +28,7 @@ type SingletonSpec struct {
 type SingletonManager struct {
 	runtime  *actor.Runtime
 	election *RingElection
-	registry *CRDTRegistry
+	registry *DistributedRegistry
 	cluster  *Cluster
 
 	mu         sync.Mutex
@@ -43,7 +43,7 @@ type singletonState struct {
 
 // NewSingletonManager creates a SingletonManager. The cluster parameter
 // is optional — only needed when using Placement predicates on specs.
-func NewSingletonManager(runtime *actor.Runtime, election *RingElection, registry *CRDTRegistry, cluster ...*Cluster) *SingletonManager {
+func NewSingletonManager(runtime *actor.Runtime, election *RingElection, registry *DistributedRegistry, cluster ...*Cluster) *SingletonManager {
 	sm := &SingletonManager{
 		runtime:    runtime,
 		election:   election,

@@ -27,7 +27,7 @@ func TestSingleNode_ElectionWorks(t *testing.T) {
 }
 
 func TestSingleNode_RegistryWorks(t *testing.T) {
-	registry := NewCRDTRegistry("solo")
+	registry := NewDistributedRegistry("solo")
 
 	p := actor.PID{Namespace: "solo", ActorID: "actor-a", Generation: 1}
 	if err := registry.Register("my-service", p); err != nil {
@@ -76,7 +76,7 @@ func TestSingleNode_SingletonWorks(t *testing.T) {
 
 func TestSingleNode_ClusterRouterWorks(t *testing.T) {
 	ctx := context.Background()
-	registry := NewCRDTRegistry("solo")
+	registry := NewDistributedRegistry("solo")
 	rt := actor.NewRuntime(actor.WithNodeID("solo"))
 
 	collector := newCollectingHandler()

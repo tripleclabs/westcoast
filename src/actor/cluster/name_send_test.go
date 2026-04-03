@@ -111,7 +111,7 @@ func TestSendName_CrossNode(t *testing.T) {
 	pid2, _ := rt2.IssuePID("node-2", "echo")
 
 	// Create a shared CRDT registry and register node-2's actor.
-	registry := NewCRDTRegistry("shared")
+	registry := NewDistributedRegistry("shared")
 	registry.Register("remote-echo", pid2)
 
 	// Create rt1 with cluster wiring + cluster registry for lookups.

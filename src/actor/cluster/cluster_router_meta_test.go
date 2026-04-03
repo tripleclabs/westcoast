@@ -25,7 +25,7 @@ func TestClusterRouter_WithWorkerFilter(t *testing.T) {
 	defer c.Stop()
 	time.Sleep(50 * time.Millisecond)
 
-	registry := NewCRDTRegistry("node-1")
+	registry := NewDistributedRegistry("node-1")
 	rt := actor.NewRuntime(actor.WithNodeID("node-1"))
 
 	cr := NewClusterRouter(rt, registry, c)
@@ -63,7 +63,7 @@ func TestClusterRouter_Nearest(t *testing.T) {
 	defer c.Stop()
 	time.Sleep(50 * time.Millisecond)
 
-	registry := NewCRDTRegistry("node-1")
+	registry := NewDistributedRegistry("node-1")
 	rt := actor.NewRuntime(actor.WithNodeID("node-1"))
 
 	// Create workers.
@@ -129,7 +129,7 @@ func TestClusterRouter_PreferTag(t *testing.T) {
 	defer c.Stop()
 	time.Sleep(50 * time.Millisecond)
 
-	registry := NewCRDTRegistry("node-1")
+	registry := NewDistributedRegistry("node-1")
 	rt := actor.NewRuntime(actor.WithNodeID("node-1"))
 
 	cr := NewClusterRouter(rt, registry, c)
@@ -165,7 +165,7 @@ func TestClusterRouter_FilterAndPreferenceCombined(t *testing.T) {
 	defer c.Stop()
 	time.Sleep(50 * time.Millisecond)
 
-	registry := NewCRDTRegistry("node-1")
+	registry := NewDistributedRegistry("node-1")
 	rt := actor.NewRuntime(actor.WithNodeID("node-1"))
 
 	cr := NewClusterRouter(rt, registry, c)
@@ -195,7 +195,7 @@ func TestClusterRouter_FilterAndPreferenceCombined(t *testing.T) {
 
 func TestClusterRouter_SendWithNoCluster(t *testing.T) {
 	// Without a cluster, preferences are ignored gracefully.
-	registry := NewCRDTRegistry("node-1")
+	registry := NewDistributedRegistry("node-1")
 	rt := actor.NewRuntime(actor.WithNodeID("node-1"))
 
 	nop := func(_ context.Context, s any, m actor.Message) (any, error) { return s, nil }

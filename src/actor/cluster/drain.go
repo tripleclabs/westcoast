@@ -77,7 +77,7 @@ type DrainOption func(*drainOptions)
 type drainOptions struct {
 	singletonManager *SingletonManager
 	daemonSetManager *DaemonSetManager
-	registry         *CRDTRegistry
+	registry         *DistributedRegistry
 }
 
 // WithSingletonManager stops singletons during drain so they migrate.
@@ -91,6 +91,6 @@ func WithDaemonSetManager(dm *DaemonSetManager) DrainOption {
 }
 
 // WithRegistry deregisters all local names during drain.
-func WithRegistry(r *CRDTRegistry) DrainOption {
+func WithRegistry(r *DistributedRegistry) DrainOption {
 	return func(o *drainOptions) { o.registry = r }
 }

@@ -1,100 +1,146 @@
 package cluster
 
 import (
+	"bytes"
+	"context"
 	"encoding/gob"
+	"errors"
+	"hash/fnv"
 
+	crdt "github.com/tripleclabs/crdt-go"
 	"github.com/tripleclabs/westcoast/src/actor"
-	"github.com/tripleclabs/westcoast/src/crdt"
 )
 
-func init() {
-	gob.Register(actor.PID{})
-	gob.Register(crdt.Entry{})
-	gob.Register(crdt.StateDelta{})
-	gob.Register(crdt.Digest{})
+// pidCodec encodes actor.PID values for the CRDT ORMap.
+type pidCodec struct{}
+
+func (pidCodec) Encode(pid actor.PID) ([]byte, error) {
+	var buf bytes.Buffer
+	if err := gob.NewEncoder(&buf).Encode(pid); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }
 
-// CRDTRegistry is a distributed name registry backed by a crdt.ORSet.
-// It maps names (strings) to actor PIDs, with eventual consistency
-// across the cluster via digest-based anti-entropy gossip.
-//
-// Node ownership is derived from the PID's Namespace field — the CRDT
-// layer doesn't need to know about nodes.
-type CRDTRegistry struct {
-	set *crdt.ORSet
+func (pidCodec) Decode(data []byte) (actor.PID, error) {
+	var pid actor.PID
+	if err := gob.NewDecoder(bytes.NewReader(data)).Decode(&pid); err != nil {
+		return actor.PID{}, err
+	}
+	return pid, nil
 }
 
-func NewCRDTRegistry(nodeID NodeID) *CRDTRegistry {
-	return &CRDTRegistry{
-		set: crdt.NewORSet(crdt.ORSetConfig{NodeID: string(nodeID)}),
+// nodeIDToReplicaID produces a deterministic uint64 replica ID from a string
+// NodeID using FNV-1a hashing.
+func nodeIDToReplicaID(id NodeID) crdt.ReplicaID {
+	h := fnv.New64a()
+	h.Write([]byte(id))
+	return h.Sum64()
+}
+
+// DistributedRegistry is a distributed name registry backed by a crdt.ORMap
+// with add-wins semantics. Replication and anti-entropy are handled entirely
+// by the CRDT library — just wire up a Transport and TopologyProvider.
+type DistributedRegistry struct {
+	data *crdt.ORMap[actor.PID]
+}
+
+// NewDistributedRegistry creates a distributed registry for single-node use
+// or testing. No replication.
+func NewDistributedRegistry(nodeID NodeID) *DistributedRegistry {
+	replicaID := nodeIDToReplicaID(nodeID)
+	return &DistributedRegistry{
+		data: crdt.NewORMap[actor.PID](replicaID, pidCodec{}),
 	}
 }
 
-func (r *CRDTRegistry) Register(name string, pid actor.PID) error {
-	// Check if already registered to the same PID (idempotent).
-	if e := r.set.Lookup(name); e != nil {
-		if e.Value.(actor.PID).Key() == pid.Key() {
-			return nil
+// NewDistributedRegistryWithTransport creates a distributed registry with
+// automatic CRDT replication and anti-entropy.
+func NewDistributedRegistryWithTransport(nodeID NodeID, transport crdt.Transport, topology crdt.TopologyProvider, opts ...crdt.Option) *DistributedRegistry {
+	replicaID := nodeIDToReplicaID(nodeID)
+	allOpts := append([]crdt.Option{
+		crdt.WithTransport(transport),
+		crdt.WithTopology(topology),
+	}, opts...)
+	return &DistributedRegistry{
+		data: crdt.NewORMap[actor.PID](replicaID, pidCodec{}, allOpts...),
+	}
+}
+
+func (r *DistributedRegistry) Register(name string, pid actor.PID) error {
+	if existing, ok := r.data.Get(name); ok {
+		if existing.Key() == pid.Key() {
+			return nil // idempotent
 		}
+		return errors.New("name already registered")
 	}
-	return r.set.Add(name, pid)
+	_, err := r.data.Put(context.Background(), name, pid)
+	return err
 }
 
-func (r *CRDTRegistry) Lookup(name string) (actor.PID, bool) {
-	e := r.set.Lookup(name)
-	if e == nil {
-		return actor.PID{}, false
-	}
-	return e.Value.(actor.PID), true
+func (r *DistributedRegistry) Lookup(name string) (actor.PID, bool) {
+	return r.data.Get(name)
 }
 
-func (r *CRDTRegistry) Unregister(name string) (actor.PID, bool) {
-	e := r.set.Remove(name)
-	if e == nil {
+func (r *DistributedRegistry) Unregister(name string) (actor.PID, bool) {
+	pid, ok := r.data.Get(name)
+	if !ok {
 		return actor.PID{}, false
 	}
-	return e.Value.(actor.PID), true
+	r.data.Remove(context.Background(), name)
+	return pid, true
 }
 
 // UnregisterByNode removes all entries where the PID lives on the given node.
-// Node ownership is derived from PID.Namespace.
-func (r *CRDTRegistry) UnregisterByNode(node NodeID) []string {
-	return r.set.RemoveIf(func(e crdt.Entry) bool {
-		return e.Value.(actor.PID).Namespace == string(node)
+func (r *DistributedRegistry) UnregisterByNode(node NodeID) []string {
+	var toRemove []string
+	r.data.Range(func(key string, pid actor.PID) bool {
+		if pid.Namespace == string(node) {
+			toRemove = append(toRemove, key)
+		}
+		return true
 	})
+	for _, name := range toRemove {
+		r.data.Remove(context.Background(), name)
+	}
+	return toRemove
 }
 
-func (r *CRDTRegistry) OnMembershipChange(event MemberEvent) {
+func (r *DistributedRegistry) OnMembershipChange(event MemberEvent) {
 	if event.Type == MemberFailed || event.Type == MemberLeave {
 		r.UnregisterByNode(event.Member.ID)
 	}
 }
 
+// Range calls fn for each registered name and PID.
+func (r *DistributedRegistry) Range(fn func(name string, pid actor.PID) bool) {
+	r.data.Range(fn)
+}
+
 // NamesByNode returns all names where the PID lives on the given node.
-func (r *CRDTRegistry) NamesByNode(node NodeID) []string {
-	entries := r.set.Filter(func(e crdt.Entry) bool {
-		return e.Value.(actor.PID).Namespace == string(node)
+func (r *DistributedRegistry) NamesByNode(node NodeID) []string {
+	var names []string
+	r.data.Range(func(name string, pid actor.PID) bool {
+		if pid.Namespace == string(node) {
+			names = append(names, name)
+		}
+		return true
 	})
-	out := make([]string, len(entries))
-	for i, e := range entries {
-		out[i] = e.Key
-	}
-	return out
+	return names
 }
 
 // AllEntries returns all registered name→PID bindings.
-func (r *CRDTRegistry) AllEntries() map[string]actor.PID {
-	entries := r.set.Entries()
-	out := make(map[string]actor.PID, len(entries))
-	for _, e := range entries {
-		out[e.Key] = e.Value.(actor.PID)
-	}
+func (r *DistributedRegistry) AllEntries() map[string]actor.PID {
+	out := make(map[string]actor.PID)
+	r.data.Range(func(name string, pid actor.PID) bool {
+		out[name] = pid
+		return true
+	})
 	return out
 }
 
-// --- Gossip integration ---
+// Close shuts down replication and anti-entropy.
+func (r *DistributedRegistry) Close() {
+	r.data.Close()
+}
 
-func (r *CRDTRegistry) Digest() crdt.Digest                    { return r.set.Digest() }
-func (r *CRDTRegistry) DeltaFor(d crdt.Digest) crdt.StateDelta { return r.set.DeltaFor(d) }
-func (r *CRDTRegistry) MergeDelta(d crdt.StateDelta)           { r.set.MergeDelta(d) }
-func (r *CRDTRegistry) Compact() int                           { return r.set.Compact() }

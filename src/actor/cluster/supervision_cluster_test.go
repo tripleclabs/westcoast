@@ -29,7 +29,7 @@ func TestClusterSupervisor_LeaderHandlesFailure(t *testing.T) {
 	defer c.Stop()
 
 	// Register actors on node-3 in the CRDT registry.
-	registry := NewCRDTRegistry("node-1")
+	registry := NewDistributedRegistry("node-1")
 	registry.Register("svc-a", actor.PID{Namespace: "node-3", ActorID: "a", Generation: 1})
 	registry.Register("svc-b", actor.PID{Namespace: "node-3", ActorID: "b", Generation: 1})
 	registry.Register("svc-c", actor.PID{Namespace: "node-1", ActorID: "c", Generation: 1})
@@ -116,7 +116,7 @@ func TestClusterSupervisor_NonLeaderIgnores(t *testing.T) {
 	c.Start(ctx)
 	defer c.Stop()
 
-	registry := NewCRDTRegistry("node-2")
+	registry := NewDistributedRegistry("node-2")
 	registry.Register("svc-a", actor.PID{Namespace: "node-3", ActorID: "a", Generation: 1})
 
 	leader, _ := election.Leader(clusterSupervisorScope)

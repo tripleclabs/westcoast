@@ -10,7 +10,7 @@ import (
 )
 
 func TestClusterRouter_JoinAndMembers(t *testing.T) {
-	registry := NewCRDTRegistry("node-1")
+	registry := NewDistributedRegistry("node-1")
 	rt := actor.NewRuntime(actor.WithNodeID("node-1"))
 	cr := NewClusterRouter(rt, registry)
 
@@ -27,7 +27,7 @@ func TestClusterRouter_JoinAndMembers(t *testing.T) {
 }
 
 func TestClusterRouter_Leave(t *testing.T) {
-	registry := NewCRDTRegistry("node-1")
+	registry := NewDistributedRegistry("node-1")
 	rt := actor.NewRuntime(actor.WithNodeID("node-1"))
 	cr := NewClusterRouter(rt, registry)
 
@@ -49,7 +49,7 @@ func TestClusterRouter_Leave(t *testing.T) {
 
 func TestClusterRouter_SendRoundRobin(t *testing.T) {
 	ctx := context.Background()
-	registry := NewCRDTRegistry("node-1")
+	registry := NewDistributedRegistry("node-1")
 	rt := actor.NewRuntime(actor.WithNodeID("node-1"))
 
 	// Create two worker actors.
@@ -98,7 +98,7 @@ func TestClusterRouter_SendRoundRobin(t *testing.T) {
 }
 
 func TestClusterRouter_SendNoWorkers(t *testing.T) {
-	registry := NewCRDTRegistry("node-1")
+	registry := NewDistributedRegistry("node-1")
 	rt := actor.NewRuntime(actor.WithNodeID("node-1"))
 	cr := NewClusterRouter(rt, registry)
 
@@ -110,7 +110,7 @@ func TestClusterRouter_SendNoWorkers(t *testing.T) {
 
 func TestClusterRouter_Broadcast(t *testing.T) {
 	ctx := context.Background()
-	registry := NewCRDTRegistry("node-1")
+	registry := NewDistributedRegistry("node-1")
 	rt := actor.NewRuntime(actor.WithNodeID("node-1"))
 
 	var mu sync.Mutex
@@ -159,7 +159,7 @@ func TestClusterRouter_Broadcast(t *testing.T) {
 }
 
 func TestClusterRouter_MembersIsolated(t *testing.T) {
-	registry := NewCRDTRegistry("node-1")
+	registry := NewDistributedRegistry("node-1")
 	rt := actor.NewRuntime(actor.WithNodeID("node-1"))
 	cr := NewClusterRouter(rt, registry)
 
@@ -213,7 +213,7 @@ func TestClusterRouter_CrossNode(t *testing.T) {
 	)
 
 	// Shared registry.
-	registry := NewCRDTRegistry("shared")
+	registry := NewDistributedRegistry("shared")
 	cr := NewClusterRouter(rt1, registry)
 	cr.Join("my-service", workerPID)
 

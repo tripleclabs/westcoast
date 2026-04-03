@@ -3,10 +3,13 @@ module github.com/tripleclabs/westcoast
 go 1.26.1
 
 require (
+	github.com/tripleclabs/crdt-go v0.0.0
 	github.com/tripleclabs/nova v0.0.0-20260330152906-9b5f04df942c
 	google.golang.org/grpc v1.79.3
 	google.golang.org/protobuf v1.36.11
 )
+
+replace github.com/tripleclabs/crdt-go => ../crdt
 
 require (
 	golang.org/x/net v0.52.0 // indirect

@@ -94,7 +94,7 @@ func TestDrain_StopsSingletons(t *testing.T) {
 func TestDrain_DeregistersNames(t *testing.T) {
 	ctx := context.Background()
 
-	registry := NewCRDTRegistry("node-1")
+	registry := NewDistributedRegistry("node-1")
 	registry.Register("svc-a", actor.PID{Namespace: "node-1", ActorID: "a", Generation: 1})
 	registry.Register("svc-b", actor.PID{Namespace: "node-1", ActorID: "b", Generation: 1})
 	registry.Register("svc-c", actor.PID{Namespace: "node-2", ActorID: "c", Generation: 1}) // different node

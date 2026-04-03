@@ -148,7 +148,7 @@ func TestFix7_Supervisor_NoPhantomDecisions(t *testing.T) {
 	c.Start(context.Background())
 	defer c.Stop()
 
-	registry := NewCRDTRegistry("node-1")
+	registry := NewDistributedRegistry("node-1")
 	registry.Register("svc-a", actor.PID{Namespace: "node-3", ActorID: "a", Generation: 1})
 
 	// Use a policy that changes leadership mid-decision.
