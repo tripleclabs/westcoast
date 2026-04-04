@@ -33,14 +33,13 @@ Zero external dependencies. Single Go module.
 - **Codec**: pluggable `Codec` for message serialization. `GobCodec` included.
 - **Ring topology**: consistent hash ring with configurable fanout and finger tables. O(log n) routing with bounded hop count. Connection count scales O(log n) vs O(n) for full mesh. `FullMeshTopology` also available for small clusters.
 - **Remote messaging**: transparent cross-node PID sends. `sendPIDWithSender` detects remote PIDs and routes through the transport layer. Ask/Reply works across nodes (node-qualified `__ask_reply@nodeID` namespaces).
-- **Distributed registry** (two strategies):
-  - `DistributedRegistry`: eventually consistent, backed by `crdt.ORSet`. Digest-based anti-entropy gossip with tombstone compaction. Add-wins OR-Set semantics with LWW conflict resolution and deterministic tiebreak.
-- **Distributed PubSub** (Phoenix.PubSub model): subscriptions stay local, publications broadcast to all nodes. `DirectPubSubAdapter` (fan-out to all) and `GossipPubSubAdapter` (epidemic gossip) included. No re-broadcast loops.
+- **Distributed registry**: `DistributedRegistry` backed by `crdt.ORMap` from `github.com/tripleclabs/crdt-go`. Add-wins semantics, automatic delta replication and anti-entropy via the CRDT library's transport layer. No hand-rolled gossip.
+- **Distributed PubSub** (Phoenix.PubSub model): subscriptions stay local, publications broadcast to other nodes. Three adapters: `DirectPubSubAdapter` (fan-out to all nodes), `GossipPubSubAdapter` (batched gossip), and `CRDTPubSubAdapter` (CRDT-replicated routing table — sends only to nodes with subscribers for the topic, major bandwidth reduction in large clusters).
 - **Leader election**: `RingElection` — deterministic from membership (hash-based, no voting protocol). Scoped elections (multiple independent elections concurrently). Monotonically increasing terms for fencing.
 - **Cluster supervision**: user-space `ClusterSupervisor` that watches for node failures, uses leader election for single-decision-maker semantics, and delegates to a pluggable `ClusterSupervisionPolicy` for placement decisions. `SimpleRestartPolicy` included.
 - **Cluster router**: `ClusterRouter` provides distributed service groups with metadata-aware routing. Workers on any node join a named service. Supports static filtering (`WithWorkerFilter`), static preference (`WithWorkerPreference`), and call-time locality-aware routing (`SendWith` + `Nearest`). Strategies: round-robin, random, consistent-hash. Worker lists replicate via CRDT gossip. No coordinator node.
 - **Singleton actors**: `SingletonManager` guarantees exactly one instance of an actor runs cluster-wide. Each singleton gets its own election scope — singletons distribute across nodes via consistent hashing (not all on the leader). On leadership change, the actor stops on the old node and starts on the new one.
-- **DaemonSet actors**: `DaemonSetManager` runs an actor on every node. Cross-node addressing via `SendTo(ctx, name, nodeID, payload)` and `AskTo` — no PID construction, no generation guessing. `Broadcast` sends to all nodes. Works seamlessly in single-node mode.
+- **DaemonSet actors**: `DaemonSetManager` runs an actor on every node. Cross-node addressing via `SendTo(ctx, name, nodeID, payload)` and `AskTo` — no PID construction, no generation guessing. `Broadcast` sends to all nodes. Works seamlessly in single-node mode. Supports **replicated state** via `RegisterReplicated[V]` — each instance gets a `crdt.ORMap[V]` with add-wins semantics that converges automatically across the cluster. Reads are local, writes replicate via the CRDT library's transport and anti-entropy.
 - **Distributed Ask**: `AskPID(ctx, pid, payload, timeout)` — request-response across nodes. The reply traverses the transport back via node-qualified `__ask_reply@nodeID` namespaces.
 - **Graceful drain**: `Drain(ctx, cluster, cfg, opts...)` — planned shutdown. Emits `MemberLeave` (vs `MemberFailed`), stops singletons and daemons, deregisters names, waits for in-flight work, then stops transport.
 - **Dynamic node metadata**: `UpdateTags(map[string]string)` sets runtime metadata on a node (region, GPU count, rack, etc.). Tags gossip to all peers automatically. Changed tags emit `MemberUpdated` events. Queryable via `Members()` and `Self()`. Providers (e.g. AWS) contribute infrastructure tags at start; applications add their own at runtime.
@@ -296,8 +295,23 @@ dm.Register(cluster.DaemonSpec{
     Name:    "metrics-collector",
     Handler: metricsHandler,
 })
+// Replicated daemon — shared CRDT state across all instances:
+cluster.RegisterReplicated[Session](dm, "session-store",
+    func(ctx context.Context, sessions *crdt.ORMap[Session], msg actor.Message) error {
+        switch m := msg.Payload.(type) {
+        case CreateSession:
+            sessions.Put(ctx, m.ID, m.Session)
+        case GetSession:
+            s, _ := sessions.Get(m.ID)
+            // reply with s...
+        }
+        return nil
+    },
+)
+
 dm.Start(ctx)
 // Daemons run on every node automatically.
+// Replicated daemons converge state across all instances via CRDT.
 
 // Send to a specific node's daemon — no PID needed:
 dm.SendTo(ctx, "coordinator", "node-3", payload)
@@ -364,7 +378,7 @@ Every distributed concern is behind an interface. Defaults work out of the box; 
 | `Codec` | `GobCodec` | Message serialization |
 | `Topology` | `FullMeshTopology` | Connection decisions and message routing |
 | `RegistryStrategy` | (interface) | Distributed name registry |
-| `PubSubAdapter` | `DirectPubSubAdapter` | Cross-node publication broadcast |
+| `PubSubAdapter` | `DirectPubSubAdapter`, `GossipPubSubAdapter`, `CRDTPubSubAdapter` | Cross-node publication broadcast |
 | `LeaderElection` | `RingElection` | Scoped leader election |
 | `ClusterSupervisionPolicy` | `SimpleRestartPolicy` | Actor placement on node failure |
 | `SupervisorPolicy` | `DefaultSupervisor` | Local actor restart decisions |
@@ -633,6 +647,21 @@ type PubSubAdapter interface {
 }
 
 type RemotePublishHandler func(topic string, payload any, publisherNode NodeID)
+
+// Built-in adapters:
+DirectPubSubAdapter     // fan-out to all nodes (simple, small clusters)
+GossipPubSubAdapter     // batched gossip (larger clusters)
+CRDTPubSubAdapter       // CRDT routing table — targeted sends only to interested nodes
+
+// CRDT adapter setup:
+adapter := cluster.NewCRDTPubSubAdapter(c, codec, crdtTransport, topology)
+adapter.RegisterHandler(dispatcher)
+
+rt := actor.NewRuntime(
+    actor.WithPubSubBroadcast(adapter.Broadcast),
+    actor.WithPubSubOnSubscribe(adapter.NotifySubscribe),
+    actor.WithPubSubOnUnsubscribe(adapter.NotifyUnsubscribe),
+)
 ```
 
 ### ClusterSupervisionPolicy
@@ -705,6 +734,10 @@ func (dm *DaemonSetManager) Running() []string
 func (dm *DaemonSetManager) SendTo(ctx context.Context, name string, nodeID NodeID, payload any) actor.PIDSendAck
 func (dm *DaemonSetManager) AskTo(ctx context.Context, name string, nodeID NodeID, payload any, timeout time.Duration) (actor.AskResult, error)
 func (dm *DaemonSetManager) Broadcast(ctx context.Context, name string, payload any) []actor.PIDSendAck
+
+// Replicated daemons — shared CRDT state across all instances:
+type ReplicatedHandler[V any] func(ctx context.Context, state *crdt.ORMap[V], msg actor.Message) error
+func RegisterReplicated[V any](dm *DaemonSetManager, name string, handler ReplicatedHandler[V], placement ...NodeMatcher)
 ```
 
 ### DrainConfig

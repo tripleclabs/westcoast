@@ -92,10 +92,16 @@ func (b *pubsubBrokerService) handleSubscribe(ctx context.Context, msg Message, 
 		b.bySubscriber[key] = make(map[string]struct{})
 	}
 	b.bySubscriber[key][p.raw] = struct{}{}
+	firstForPattern := !exists && len(b.byPattern[p.raw]) == 1
 	if !exists {
 		b.trie.insert(p, cmd.Subscriber)
 	}
 	b.mu.Unlock()
+
+	// Notify the cluster layer when a topic gains its first local subscriber.
+	if firstForPattern && b.runtime.pubsubOnSubscribe != nil {
+		b.runtime.pubsubOnSubscribe(ctx, p.raw)
+	}
 
 	b.runtime.emitBroker(b.brokerID, BrokerOperationSubscribe, p.raw, cmd.Subscriber, 0, BrokerOutcomeSubscribeSuccess, "")
 	replyTo, _ := msg.AskReplyTo()
@@ -127,10 +133,12 @@ func (b *pubsubBrokerService) handleUnsubscribe(ctx context.Context, msg Message
 	key := cmd.Subscriber.Key()
 	b.mu.Lock()
 	_, hasSub := b.byPattern[p.raw][key]
+	lastForPattern := false
 	if hasSub {
 		delete(b.byPattern[p.raw], key)
 		if len(b.byPattern[p.raw]) == 0 {
 			delete(b.byPattern, p.raw)
+			lastForPattern = true
 		}
 		delete(b.bySubscriber[key], p.raw)
 		if len(b.bySubscriber[key]) == 0 {
@@ -139,6 +147,11 @@ func (b *pubsubBrokerService) handleUnsubscribe(ctx context.Context, msg Message
 		b.rebuildTrieLocked()
 	}
 	b.mu.Unlock()
+
+	// Notify the cluster layer when a topic loses its last local subscriber.
+	if lastForPattern && b.runtime.pubsubOnUnsubscribe != nil {
+		b.runtime.pubsubOnUnsubscribe(ctx, p.raw)
+	}
 
 	replyTo, _ := msg.AskReplyTo()
 	if !hasSub {

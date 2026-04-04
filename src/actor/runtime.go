@@ -84,7 +84,9 @@ type Runtime struct {
 	clusterUnregister func(name string) (PID, bool)
 
 	// Cluster pubsub integration (nil when using local-only pubsub).
-	pubsubBroadcast PubSubBroadcastFunc
+	pubsubBroadcast      PubSubBroadcastFunc
+	pubsubOnSubscribe    PubSubSubscriptionFunc
+	pubsubOnUnsubscribe  PubSubSubscriptionFunc
 
 	// Timer management.
 	timers *timerManager
@@ -125,6 +127,11 @@ type RemoteAskSenderFunc func(ctx context.Context, senderActorID string, pid PID
 // PubSubBroadcastFunc broadcasts a publication to all other cluster nodes.
 // The payload is the raw Go value — the adapter handles encoding.
 type PubSubBroadcastFunc func(ctx context.Context, topic string, payload any) error
+
+// PubSubSubscriptionFunc is called when a topic gains its first local
+// subscriber or loses its last local subscriber. Used by the cluster
+// layer to maintain a distributed routing table.
+type PubSubSubscriptionFunc func(ctx context.Context, topic string)
 
 // ClusterMemberInfo describes a cluster member as seen by the Runtime.
 type ClusterMemberInfo struct {
@@ -193,6 +200,20 @@ func (r *Runtime) NodeID() string { return r.nodeID }
 // to other cluster nodes. When set, local publishes are also broadcast.
 func WithPubSubBroadcast(fn PubSubBroadcastFunc) RuntimeOption {
 	return func(r *Runtime) { r.pubsubBroadcast = fn }
+}
+
+// WithPubSubOnSubscribe sets a callback invoked when a topic gains its
+// first local subscriber. Used by the CRDT pubsub adapter to update the
+// distributed routing table.
+func WithPubSubOnSubscribe(fn PubSubSubscriptionFunc) RuntimeOption {
+	return func(r *Runtime) { r.pubsubOnSubscribe = fn }
+}
+
+// WithPubSubOnUnsubscribe sets a callback invoked when a topic loses its
+// last local subscriber. Used by the CRDT pubsub adapter to remove the
+// node from the distributed routing table for that topic.
+func WithPubSubOnUnsubscribe(fn PubSubSubscriptionFunc) RuntimeOption {
+	return func(r *Runtime) { r.pubsubOnUnsubscribe = fn }
 }
 
 // WithClusterMembers injects the function to query cluster membership.

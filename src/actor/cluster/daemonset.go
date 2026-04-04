@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	crdt "github.com/tripleclabs/crdt-go"
 	"github.com/tripleclabs/westcoast/src/actor"
 )
 
@@ -36,8 +37,10 @@ type DaemonSetManager struct {
 }
 
 type daemonState struct {
-	spec    DaemonSpec
-	running bool
+	spec       DaemonSpec
+	running    bool
+	replicated *replicatedConfig // non-nil for replicated daemons
+	closer     func()           // cleanup for CRDT state on stop
 }
 
 // NewDaemonSetManager creates a manager for daemon actors. The cluster
@@ -87,6 +90,10 @@ func (dm *DaemonSetManager) Stop() {
 	for name, d := range dm.daemons {
 		if d.running {
 			dm.runtime.Stop(name)
+			if d.closer != nil {
+				d.closer()
+				d.closer = nil
+			}
 			d.running = false
 		}
 	}
@@ -220,14 +227,22 @@ func (dm *DaemonSetManager) reconcileDaemon(name string) {
 	shouldRun := dm.shouldRunLocally(d.spec)
 
 	if shouldRun && !d.running {
-		_, err := dm.runtime.CreateActor(d.spec.Name, d.spec.InitialState, d.spec.Handler, d.spec.Options...)
-		if err == nil {
-			d.running = true
+		if d.replicated != nil {
+			dm.startReplicatedDaemon(d)
+		} else {
+			_, err := dm.runtime.CreateActor(d.spec.Name, d.spec.InitialState, d.spec.Handler, d.spec.Options...)
+			if err == nil {
+				d.running = true
+			}
 		}
 	}
 
 	if !shouldRun && d.running {
 		dm.runtime.Stop(name)
+		if d.closer != nil {
+			d.closer()
+			d.closer = nil
+		}
 		d.running = false
 	}
 }
@@ -242,6 +257,55 @@ func (dm *DaemonSetManager) shouldRunLocally(spec DaemonSpec) bool {
 		return spec.Placement(NodeMeta{ID: NodeID(dm.runtime.NodeID())})
 	}
 	return spec.Placement(dm.cluster.Self())
+}
+
+// startReplicatedDaemon creates a CRDT-backed daemon actor with transport
+// and topology wired to the cluster. The topology is scoped to nodes that
+// match the daemon's placement predicate — only those nodes run the daemon
+// and participate in replication.
+func (dm *DaemonSetManager) startReplicatedDaemon(d *daemonState) {
+	var transport crdt.Transport
+	var topology crdt.TopologyProvider
+
+	if dm.cluster != nil {
+		transport = NewClusterCRDTTransport(dm.cluster)
+		topology = &daemonTopology{
+			cluster:   dm.cluster,
+			placement: d.spec.Placement,
+		}
+	}
+	// Without a cluster, transport and topology stay nil — the CRDT
+	// works as a local-only data structure (no replication).
+
+	replicaID := nodeIDToReplicaID(NodeID(dm.runtime.NodeID()))
+	state, handler, closer := d.replicated.create(replicaID, transport, topology)
+
+	_, err := dm.runtime.CreateActor(d.spec.Name, state, handler, d.spec.Options...)
+	if err == nil {
+		d.running = true
+		d.closer = closer
+	} else if closer != nil {
+		closer()
+	}
+}
+
+// daemonTopology implements crdt.TopologyProvider scoped to nodes that
+// match a daemon's placement predicate. This ensures the CRDT only
+// replicates to nodes that actually run the daemon.
+type daemonTopology struct {
+	cluster   *Cluster
+	placement NodeMatcher
+}
+
+func (t *daemonTopology) Peers() []crdt.ReplicaID {
+	members := t.cluster.Members()
+	var peers []crdt.ReplicaID
+	for _, m := range members {
+		if t.placement == nil || t.placement(m) {
+			peers = append(peers, nodeIDToReplicaID(m.ID))
+		}
+	}
+	return peers
 }
 
 func pidOutcomeFromSubmit(result actor.SubmitResult) actor.PIDDeliveryOutcome {

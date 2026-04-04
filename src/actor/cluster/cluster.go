@@ -27,6 +27,12 @@ type ClusterConfig struct {
 	// Set by the Runtime integration layer (Phase 6) to publish
 	// membership events on the cluster.membership pubsub topic.
 	OnMemberEvent func(event MemberEvent)
+
+	// SendTimeout is the maximum time a single SendRemote call will
+	// wait for the underlying connection write to complete. When the
+	// caller's context has no deadline, this timeout is applied.
+	// Default: 5s.
+	SendTimeout time.Duration
 }
 
 // Cluster manages the lifecycle of a single node within a cluster.
@@ -68,6 +74,9 @@ func NewCluster(cfg ClusterConfig) (*Cluster, error) {
 	}
 	if cfg.Topology == nil {
 		cfg.Topology = FullMeshTopology{}
+	}
+	if cfg.SendTimeout <= 0 {
+		cfg.SendTimeout = 5 * time.Second
 	}
 	if cfg.Self.Tags == nil {
 		cfg.Self.Tags = make(map[string]string)
@@ -159,6 +168,13 @@ func (c *Cluster) Members() []NodeMeta {
 func (c *Cluster) SendRemote(ctx context.Context, target NodeID, env Envelope) error {
 	if env.SentAtUnixNano == 0 {
 		env.SentAtUnixNano = time.Now().UnixNano()
+	}
+
+	// Apply default send timeout when the caller has no deadline.
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, c.cfg.SendTimeout)
+		defer cancel()
 	}
 
 	// Try direct connection first.

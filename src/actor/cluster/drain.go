@@ -59,6 +59,14 @@ func Drain(ctx context.Context, c *Cluster, cfg DrainConfig, opts ...DrainOption
 		o.registry.UnregisterByNode(c.cfg.Self.ID)
 	}
 
+	// 3b. Remove local pubsub routing entries.
+	if o.pubsubAdapter != nil {
+		o.pubsubAdapter.OnMembershipChange(MemberEvent{
+			Type:   MemberLeave,
+			Member: c.cfg.Self,
+		})
+	}
+
 	// 4. Wait for drain period — gives in-flight messages time to complete.
 	// The caller's actors should be draining their mailboxes during this time.
 	select {
@@ -78,6 +86,7 @@ type drainOptions struct {
 	singletonManager *SingletonManager
 	daemonSetManager *DaemonSetManager
 	registry         *DistributedRegistry
+	pubsubAdapter    *CRDTPubSubAdapter
 }
 
 // WithSingletonManager stops singletons during drain so they migrate.
@@ -93,4 +102,10 @@ func WithDaemonSetManager(dm *DaemonSetManager) DrainOption {
 // WithRegistry deregisters all local names during drain.
 func WithRegistry(r *DistributedRegistry) DrainOption {
 	return func(o *drainOptions) { o.registry = r }
+}
+
+// WithPubSubAdapter removes local pubsub routing entries during drain
+// so peers stop sending publications to this node immediately.
+func WithPubSubAdapter(a *CRDTPubSubAdapter) DrainOption {
+	return func(o *drainOptions) { o.pubsubAdapter = a }
 }
