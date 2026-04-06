@@ -14,6 +14,26 @@ import (
 // writes replicate automatically to all peer instances.
 type ReplicatedHandler[V any] func(ctx context.Context, state *crdt.ORMap[V], msg actor.Message) error
 
+// RegisterReplicatedOption configures a replicated daemon registration.
+type RegisterReplicatedOption func(*replicatedOpts)
+
+type replicatedOpts struct {
+	placement   NodeMatcher
+	crdtOptions []crdt.Option
+}
+
+// WithReplicatedPlacement restricts which nodes run this replicated daemon.
+func WithReplicatedPlacement(m NodeMatcher) RegisterReplicatedOption {
+	return func(o *replicatedOpts) { o.placement = m }
+}
+
+// WithCRDTOptions passes extra crdt.Option values to the ORMap constructor.
+// Use this to inject a persistent backend (e.g. crdtbolt), write concern, or
+// anti-entropy interval.
+func WithCRDTOptions(opts ...crdt.Option) RegisterReplicatedOption {
+	return func(o *replicatedOpts) { o.crdtOptions = append(o.crdtOptions, opts...) }
+}
+
 // RegisterReplicated registers a daemon that runs on every matching node with
 // shared CRDT-replicated state. Each instance gets an ORMap[V] that
 // converges automatically across the cluster — no explicit sync needed.
@@ -23,7 +43,7 @@ type ReplicatedHandler[V any] func(ctx context.Context, state *crdt.ORMap[V], ms
 //
 // Example:
 //
-//	dm.RegisterReplicated[Session]("session-store",
+//	cluster.RegisterReplicated[Session](dm, "session-store",
 //	    func(ctx context.Context, sessions *crdt.ORMap[Session], msg actor.Message) error {
 //	        switch m := msg.Payload.(type) {
 //	        case CreateSession:
@@ -35,10 +55,10 @@ type ReplicatedHandler[V any] func(ctx context.Context, state *crdt.ORMap[V], ms
 //	        return nil
 //	    },
 //	)
-func RegisterReplicated[V any](dm *DaemonSetManager, name string, handler ReplicatedHandler[V], placement ...NodeMatcher) {
-	var p NodeMatcher
-	if len(placement) > 0 {
-		p = placement[0]
+func RegisterReplicated[V any](dm *DaemonSetManager, name string, handler ReplicatedHandler[V], opts ...RegisterReplicatedOption) {
+	var ro replicatedOpts
+	for _, o := range opts {
+		o(&ro)
 	}
 
 	dm.mu.Lock()
@@ -47,18 +67,19 @@ func RegisterReplicated[V any](dm *DaemonSetManager, name string, handler Replic
 	dm.daemons[name] = &daemonState{
 		spec: DaemonSpec{
 			Name:      name,
-			Placement: p,
+			Placement: ro.placement,
 		},
 		replicated: &replicatedConfig{
 			create: func(replicaID crdt.ReplicaID, transport crdt.Transport, topology crdt.TopologyProvider) (state any, actorHandler actor.Handler, closer func()) {
-				var opts []crdt.Option
+				var crdtOpts []crdt.Option
 				if transport != nil {
-					opts = append(opts, crdt.WithTransport(transport))
+					crdtOpts = append(crdtOpts, crdt.WithTransport(transport))
 				}
 				if topology != nil {
-					opts = append(opts, crdt.WithTopology(topology))
+					crdtOpts = append(crdtOpts, crdt.WithTopology(topology))
 				}
-				m := crdt.NewORMap[V](replicaID, gobCodec[V]{}, opts...)
+				crdtOpts = append(crdtOpts, ro.crdtOptions...)
+				m := crdt.NewORMap[V](replicaID, gobCodec[V]{}, crdtOpts...)
 				actorHandler = func(ctx context.Context, state any, msg actor.Message) (any, error) {
 					err := handler(ctx, state.(*crdt.ORMap[V]), msg)
 					return state, err
