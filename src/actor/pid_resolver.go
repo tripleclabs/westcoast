@@ -19,6 +19,7 @@ type PIDResolver interface {
 	Resolve(pid PID) (PIDResolverEntry, bool)
 	SetState(pid PID, state PIDRouteState)
 	BumpGeneration(pid PID) (PID, bool)
+	Remove(pid PID)
 	SetGatewayMode(mode GatewayRouteMode)
 	GatewayMode() GatewayRouteMode
 	SetGatewayAvailability(available bool)
@@ -57,6 +58,13 @@ func (r *InMemoryPIDResolver) Resolve(pid PID) (PIDResolverEntry, bool) {
 	defer r.mu.RUnlock()
 	entry, ok := r.byKey[pid.Key()]
 	return entry, ok
+}
+
+// Remove deletes a PID entry from the resolver.
+func (r *InMemoryPIDResolver) Remove(pid PID) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.byKey, pid.Key())
 }
 
 // SetState updates the routing state for a PID.

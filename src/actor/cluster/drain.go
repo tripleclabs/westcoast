@@ -47,7 +47,17 @@ func Drain(ctx context.Context, c *Cluster, cfg DrainConfig, opts ...DrainOption
 	}
 
 	// 2. Stop singletons and daemons.
+	// Brief grace period so new leaders can send handoff requests and
+	// receive state from singletons that are still running on this node.
 	if o.singletonManager != nil {
+		grace := 2 * time.Second
+		if o.handoffGrace > 0 {
+			grace = o.handoffGrace
+		}
+		select {
+		case <-ctx.Done():
+		case <-time.After(grace):
+		}
 		o.singletonManager.Stop()
 	}
 	if o.daemonSetManager != nil {
@@ -87,6 +97,7 @@ type drainOptions struct {
 	daemonSetManager *DaemonSetManager
 	registry         *DistributedRegistry
 	pubsubAdapter    *CRDTPubSubAdapter
+	handoffGrace     time.Duration
 }
 
 // WithSingletonManager stops singletons during drain so they migrate.
@@ -108,4 +119,11 @@ func WithRegistry(r *DistributedRegistry) DrainOption {
 // so peers stop sending publications to this node immediately.
 func WithPubSubAdapter(a *CRDTPubSubAdapter) DrainOption {
 	return func(o *drainOptions) { o.pubsubAdapter = a }
+}
+
+// WithHandoffGrace sets how long to wait after emitting MemberLeave
+// before stopping singletons, giving new leaders time to send handoff
+// requests. Defaults to 2s.
+func WithHandoffGrace(d time.Duration) DrainOption {
+	return func(o *drainOptions) { o.handoffGrace = d }
 }

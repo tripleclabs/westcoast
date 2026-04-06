@@ -45,17 +45,59 @@ type DistributedRegistry struct {
 	data *crdt.ORMap[actor.PID]
 }
 
-// NewDistributedRegistry creates a distributed registry for single-node use
-// or testing. No replication.
-func NewDistributedRegistry(nodeID NodeID) *DistributedRegistry {
+// RegistryOption configures a DistributedRegistry.
+type RegistryOption func(*registryOpts)
+
+type registryOpts struct {
+	cluster  *Cluster
+	crdtOpts []crdt.Option
+}
+
+// WithClusterReplication enables automatic CRDT replication over the
+// cluster transport. This replaces the need to manually create a
+// ClusterCRDTTransport and ClusterTopology.
+func WithClusterReplication(c *Cluster) RegistryOption {
+	return func(o *registryOpts) { o.cluster = c }
+}
+
+// WithRegistryCRDTOptions passes extra crdt.Option values to the
+// underlying ORMap (e.g. anti-entropy interval, persistence backend).
+func WithRegistryCRDTOptions(opts ...crdt.Option) RegistryOption {
+	return func(o *registryOpts) { o.crdtOpts = append(o.crdtOpts, opts...) }
+}
+
+// NewDistributedRegistry creates a distributed name registry.
+//
+// Without options, the registry is local-only (single-node or testing).
+// Pass WithClusterReplication to enable automatic replication across
+// the cluster:
+//
+//	registry := NewDistributedRegistry(nodeID, WithClusterReplication(cluster))
+func NewDistributedRegistry(nodeID NodeID, opts ...RegistryOption) *DistributedRegistry {
+	var o registryOpts
+	for _, opt := range opts {
+		opt(&o)
+	}
+
 	replicaID := nodeIDToReplicaID(nodeID)
+
+	var crdtOpts []crdt.Option
+	if o.cluster != nil {
+		crdtOpts = append(crdtOpts,
+			crdt.WithTransport(NewClusterCRDTTransport(o.cluster)),
+			crdt.WithTopology(NewClusterTopology(o.cluster)),
+		)
+	}
+	crdtOpts = append(crdtOpts, o.crdtOpts...)
+
 	return &DistributedRegistry{
-		data: crdt.NewORMap[actor.PID](replicaID, pidCodec{}),
+		data: crdt.NewORMap[actor.PID](replicaID, pidCodec{}, crdtOpts...),
 	}
 }
 
 // NewDistributedRegistryWithTransport creates a distributed registry with
-// automatic CRDT replication and anti-entropy.
+// explicit CRDT transport and topology. Prefer NewDistributedRegistry with
+// WithClusterReplication for most use cases.
 func NewDistributedRegistryWithTransport(nodeID NodeID, transport crdt.Transport, topology crdt.TopologyProvider, opts ...crdt.Option) *DistributedRegistry {
 	replicaID := nodeIDToReplicaID(nodeID)
 	allOpts := append([]crdt.Option{

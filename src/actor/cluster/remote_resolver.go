@@ -89,6 +89,10 @@ func (r *RemotePIDResolver) Resolve(pid actor.PID) (actor.PIDResolverEntry, bool
 	}, true
 }
 
+func (r *RemotePIDResolver) Remove(pid actor.PID) {
+	r.local.Remove(pid)
+}
+
 func (r *RemotePIDResolver) SetState(pid actor.PID, state actor.PIDRouteState) {
 	r.local.SetState(pid, state)
 }

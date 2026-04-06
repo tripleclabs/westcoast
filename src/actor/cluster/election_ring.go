@@ -135,6 +135,12 @@ func (e *RingElection) SetMembers(members []NodeMeta) {
 	}
 }
 
+func (e *RingElection) memberCount() int {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return len(e.members)
+}
+
 func (e *RingElection) ensureScopeLocked(scope string) *electionScope {
 	s, ok := e.scopes[scope]
 	if !ok {

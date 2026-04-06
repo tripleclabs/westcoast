@@ -16,6 +16,8 @@ var (
 	ErrActorNotFound = errors.New("actor_not_found")
 	// ErrActorStopped is returned when sending to a stopped actor.
 	ErrActorStopped = errors.New("actor_stopped")
+	// ErrActorStillRunning is returned by RemoveActor when the actor has not been stopped yet.
+	ErrActorStillRunning = errors.New("actor_still_running")
 	// ErrStateMutationForbidden is returned when attempting to set state via ActorRef.
 	ErrStateMutationForbidden = errors.New("state_mutation_forbidden")
 	// ErrRegistryNameInvalid is returned when a registry name fails validation.

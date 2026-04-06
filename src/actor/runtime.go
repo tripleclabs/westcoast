@@ -1385,6 +1385,25 @@ func (r *Runtime) Stop(actorID string) StopResult {
 	return StopStopped
 }
 
+// RemoveActor purges a stopped actor from the internal registry, allowing
+// its ID to be reused by a future CreateActor call. Returns ErrActorNotFound
+// if no such actor exists, or ErrActorStopped if the actor is still running
+// (use Stop first).
+func (r *Runtime) RemoveActor(actorID string) error {
+	inst, ok := r.registry.get(actorID)
+	if !ok {
+		return ErrActorNotFound
+	}
+	if actorStatusCode(inst.status.Load()) != ActorStoppedCode {
+		return fmt.Errorf("cannot remove actor %q: %w", actorID, ErrActorStillRunning)
+	}
+	r.registry.remove(actorID)
+	if v, ok := r.actorPID.LoadAndDelete(actorID); ok {
+		r.resolver.Remove(v.(PID))
+	}
+	return nil
+}
+
 func (r *Runtime) cleanupRegistryForActor(actorID string, result RegistryOperationResult) {
 	entries := r.names.unregisterByActor(actorID)
 	for _, e := range entries {

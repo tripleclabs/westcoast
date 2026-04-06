@@ -33,15 +33,15 @@ Zero external dependencies. Single Go module.
 - **Codec**: pluggable `Codec` for message serialization. `GobCodec` included.
 - **Ring topology**: consistent hash ring with configurable fanout and finger tables. O(log n) routing with bounded hop count. Connection count scales O(log n) vs O(n) for full mesh. `FullMeshTopology` also available for small clusters.
 - **Remote messaging**: transparent cross-node PID sends. `sendPIDWithSender` detects remote PIDs and routes through the transport layer. Ask/Reply works across nodes (node-qualified `__ask_reply@nodeID` namespaces).
-- **Distributed registry**: `DistributedRegistry` backed by `crdt.ORMap` from `github.com/tripleclabs/crdt-go`. Add-wins semantics, automatic delta replication and anti-entropy via the CRDT library's transport layer. No hand-rolled gossip.
+- **Distributed registry**: `DistributedRegistry` backed by `crdt.ORMap` from `github.com/tripleclabs/crdt-go`. Add-wins semantics, automatic delta replication and anti-entropy via the CRDT library's transport layer. No hand-rolled gossip. `NewDistributedRegistry(nodeID, WithClusterReplication(cluster))` wires up CRDT transport automatically.
 - **Distributed PubSub** (Phoenix.PubSub model): subscriptions stay local, publications broadcast to other nodes. Three adapters: `DirectPubSubAdapter` (fan-out to all nodes), `GossipPubSubAdapter` (batched gossip), and `CRDTPubSubAdapter` (CRDT-replicated routing table — sends only to nodes with subscribers for the topic, major bandwidth reduction in large clusters).
 - **Leader election**: `RingElection` — deterministic from membership (hash-based, no voting protocol). Scoped elections (multiple independent elections concurrently). Monotonically increasing terms for fencing.
 - **Cluster supervision**: user-space `ClusterSupervisor` that watches for node failures, uses leader election for single-decision-maker semantics, and delegates to a pluggable `ClusterSupervisionPolicy` for placement decisions. `SimpleRestartPolicy` included.
 - **Cluster router**: `ClusterRouter` provides distributed service groups with metadata-aware routing. Workers on any node join a named service. Supports static filtering (`WithWorkerFilter`), static preference (`WithWorkerPreference`), and call-time locality-aware routing (`SendWith` + `Nearest`). Strategies: round-robin, random, consistent-hash. Worker lists replicate via CRDT gossip. No coordinator node.
-- **Singleton actors**: `SingletonManager` guarantees exactly one instance of an actor runs cluster-wide. Each singleton gets its own election scope — singletons distribute across nodes via consistent hashing (not all on the leader). On leadership change, the actor stops on the old node and starts on the new one.
+- **Singleton actors**: `SingletonManager` guarantees exactly one instance of an actor runs cluster-wide. Each singleton gets its own election scope — singletons distribute across nodes via consistent hashing (not all on the leader). On leadership change, a **handoff protocol** coordinates the transition: the new leader requests the old leader to stop the singleton and optionally transfer state before starting it. This guarantees at-most-one semantics — the new instance never starts until the old one confirms it has stopped. Configurable `HandoffTimeout` with automatic fallback if the old leader is unreachable. Cluster-of-one incurs zero handoff overhead. Optional `Placement` predicates restrict which nodes can host a singleton.
 - **DaemonSet actors**: `DaemonSetManager` runs an actor on every node. Cross-node addressing via `SendTo(ctx, name, nodeID, payload)` and `AskTo` — no PID construction, no generation guessing. `Broadcast` sends to all nodes. Works seamlessly in single-node mode. Supports **replicated state** via `RegisterReplicated[V]` — each instance gets a `crdt.ORMap[V]` with add-wins semantics that converges automatically across the cluster. Reads are local, writes replicate via the CRDT library's transport and anti-entropy.
 - **Distributed Ask**: `AskPID(ctx, pid, payload, timeout)` — request-response across nodes. The reply traverses the transport back via node-qualified `__ask_reply@nodeID` namespaces.
-- **Graceful drain**: `Drain(ctx, cluster, cfg, opts...)` — planned shutdown. Emits `MemberLeave` (vs `MemberFailed`), stops singletons and daemons, deregisters names, waits for in-flight work, then stops transport.
+- **Graceful drain**: `Drain(ctx, cluster, cfg, opts...)` — planned shutdown. Emits `MemberLeave` (vs `MemberFailed`), waits a configurable handoff grace period for singleton handoff requests to complete, stops singletons and daemons, deregisters names, waits for in-flight work, then stops transport.
 - **Dynamic node metadata**: `UpdateTags(map[string]string)` sets runtime metadata on a node (region, GPU count, rack, etc.). Tags gossip to all peers automatically. Changed tags emit `MemberUpdated` events. Queryable via `Members()` and `Self()`. Providers (e.g. AWS) contribute infrastructure tags at start; applications add their own at runtime.
 - **Membership events**: `cluster.membership` PubSub topic for actors to observe join/leave/fail/update. `Runtime.ClusterMembers()` query API.
 - **Gossip protocol**: generic `GossipProtocol` with `GossipRouter` for multiplexing. Used by CRDT registry, PubSub adapter, and metadata gossip.
@@ -163,6 +163,7 @@ c1.Start(context.Background())
   - `WithMailboxCapacity(n)`, `WithStartHook(h)`, `WithStopHook(h)`
   - `WithStopHookTimeout(d)`, `WithBatching(maxSize, receiver)`
 - `ActorRef.Stop()`, `ActorRef.Status()`
+- `RemoveActor(id)` — purge a stopped actor from the registry so its ID can be reused by `CreateActor`
 
 ### Messaging
 
@@ -269,15 +270,49 @@ cr.SendWith(ctx, "api", payload,
 ### Singleton Actors
 
 ```go
+// Basic — no handoff protocol (single-node or non-critical):
 sm := cluster.NewSingletonManager(rt, election, registry)
+
+// With handoff protocol — at-most-one guarantee during transitions:
+sm := cluster.NewSingletonManager(rt, election, registry,
+    cluster.WithCluster(c),
+    cluster.WithCodec(codec),
+    cluster.WithDispatcher(dispatcher),
+)
+
+// Wire membership events so the manager can skip handoff for crashed nodes:
+c.SetOnMemberEvent(func(event cluster.MemberEvent) {
+    sm.OnMemberEvent(event)
+    election.OnMembershipChange(event)
+})
+
 sm.Register(cluster.SingletonSpec{
     Name:    "scheduler",
     Handler: schedulerHandler,
 })
+
+// With state handoff — old instance transfers state to new instance:
 sm.Register(cluster.SingletonSpec{
-    Name:    "rate-limiter",
-    Handler: rateLimiterHandler,
+    Name:           "rate-limiter",
+    Handler:        rateLimiterHandler,
+    HandoffTimeout: 15 * time.Second,
+    CaptureState: func(ctx context.Context, actorID string) (any, error) {
+        // Called on the OLD leader after stopping the actor.
+        return currentRateLimits, nil
+    },
+    OnHandoff: func(state any) any {
+        // Called on the NEW leader — returns initial state.
+        return state // use transferred state as-is
+    },
 })
+
+// Restrict to specific nodes:
+sm.Register(cluster.SingletonSpec{
+    Name:      "gpu-coordinator",
+    Handler:   gpuHandler,
+    Placement: cluster.TagGTE("gpus", 1),
+})
+
 sm.Start(ctx)
 // Singletons distribute across nodes automatically.
 // sm.Running() shows which ones are on this node.
@@ -331,8 +366,12 @@ cluster.Drain(ctx, c, cluster.DrainConfig{Timeout: 30 * time.Second},
     cluster.WithSingletonManager(sm),   // singletons migrate to other nodes
     cluster.WithDaemonSetManager(dm),   // daemons stop
     cluster.WithRegistry(registry),     // names deregistered
+    cluster.WithPubSubAdapter(adapter), // pubsub routing cleaned up
+    cluster.WithHandoffGrace(3*time.Second), // wait for handoff requests
 )
 // Peers see MemberLeave (not MemberFailed), so no false failure recovery.
+// During the handoff grace period, new singleton leaders can request state
+// from this node before it shuts down.
 ```
 
 ### Observability
@@ -707,11 +746,22 @@ func PreferTag(key string, direction RankDirection) RoutePreference  // numeric 
 
 ```go
 type SingletonSpec struct {
-    Name         string           // actor ID and registered name
+    Name         string              // actor ID and registered name
     InitialState any
     Handler      actor.Handler
     Options      []actor.ActorOption
+    Placement    NodeMatcher         // nil = any node eligible
+
+    // Handoff protocol (optional — requires WithCluster/WithCodec/WithDispatcher):
+    HandoffTimeout time.Duration                                    // default 10s
+    CaptureState   func(ctx context.Context, actorID string) (any, error) // extract state on old leader
+    OnHandoff      func(handoffState any) any                       // transform state on new leader
 }
+
+type SingletonManagerOption func(*SingletonManager)
+func WithCluster(c *Cluster) SingletonManagerOption
+func WithCodec(c Codec) SingletonManagerOption
+func WithDispatcher(d *InboundDispatcher) SingletonManagerOption
 ```
 
 ### DaemonSpec
@@ -737,7 +787,7 @@ func (dm *DaemonSetManager) Broadcast(ctx context.Context, name string, payload 
 
 // Replicated daemons — shared CRDT state across all instances:
 type ReplicatedHandler[V any] func(ctx context.Context, state *crdt.ORMap[V], msg actor.Message) error
-func RegisterReplicated[V any](dm *DaemonSetManager, name string, handler ReplicatedHandler[V], placement ...NodeMatcher)
+func RegisterReplicated[V any](dm *DaemonSetManager, name string, handler ReplicatedHandler[V], opts ...RegisterReplicatedOption)
 ```
 
 ### DrainConfig
@@ -751,6 +801,8 @@ type DrainConfig struct {
 func WithSingletonManager(sm *SingletonManager) DrainOption
 func WithDaemonSetManager(dm *DaemonSetManager) DrainOption
 func WithRegistry(r *DistributedRegistry) DrainOption
+func WithPubSubAdapter(a *CRDTPubSubAdapter) DrainOption
+func WithHandoffGrace(d time.Duration) DrainOption  // default 2s; time for singleton handoff requests
 ```
 
 ## Feature Specs

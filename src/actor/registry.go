@@ -31,6 +31,16 @@ func (r *actorRegistry) get(id string) (*actorInstance, bool) {
 	return a, ok
 }
 
+func (r *actorRegistry) remove(id string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.actors[id]; !ok {
+		return false
+	}
+	delete(r.actors, id)
+	return true
+}
+
 type registryEntry struct {
 	name    string
 	actorID string

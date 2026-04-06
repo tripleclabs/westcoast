@@ -10,8 +10,9 @@ import (
 	"github.com/tripleclabs/westcoast/src/actor"
 )
 
-var _ = fmt.Sprintf // used in TestSingleton_DistributesAcrossNodes
-var _ atomic.Int32  // used in TestSingleton_StartsOnLeader
+var _ = fmt.Sprintf  // used in TestSingleton_DistributesAcrossNodes
+var _ atomic.Int32   // used in TestSingleton_StartsOnLeader
+var _ atomic.Int64   // used in TestSingleton_TwoNodes_NoFlapping
 
 func TestSingleton_StartsOnLeader(t *testing.T) {
 	election := NewRingElection("node-1")
@@ -180,5 +181,316 @@ func TestSingleton_StopCleansUp(t *testing.T) {
 	status := rt.Status("cleanup-test")
 	if status != actor.ActorStopped {
 		t.Errorf("actor should be stopped, got %s", status)
+	}
+}
+
+func TestSingleton_ClusterOfOne(t *testing.T) {
+	// Single node: no handoff protocol needed, singleton starts immediately.
+	election := NewRingElection("solo")
+	election.SetMembers([]NodeMeta{{ID: "solo"}})
+
+	rt := actor.NewRuntime(actor.WithNodeID("solo"))
+	handler := func(_ context.Context, state any, msg actor.Message) (any, error) {
+		return state, nil
+	}
+
+	sm := NewSingletonManager(rt, election, nil)
+	sm.Register(SingletonSpec{
+		Name:    "solo-singleton",
+		Handler: handler,
+	})
+	sm.Start(context.Background())
+	defer sm.Stop()
+
+	time.Sleep(50 * time.Millisecond)
+
+	running := sm.Running()
+	if len(running) != 1 || running[0] != "solo-singleton" {
+		t.Errorf("expected solo-singleton running, got %v", running)
+	}
+}
+
+func TestSingleton_MemberFailed_SkipsHandoff(t *testing.T) {
+	// When the previous leader fails, the new leader should start immediately
+	// without attempting a handoff.
+	election := NewRingElection("node-1")
+	election.SetMembers([]NodeMeta{{ID: "node-1"}, {ID: "node-2"}})
+
+	rt := actor.NewRuntime(actor.WithNodeID("node-1"))
+	handler := func(_ context.Context, state any, msg actor.Message) (any, error) {
+		return state, nil
+	}
+
+	sm := NewSingletonManager(rt, election, nil)
+	sm.Register(SingletonSpec{
+		Name:    "failover-test",
+		Handler: handler,
+	})
+	sm.Start(context.Background())
+	defer sm.Stop()
+
+	time.Sleep(100 * time.Millisecond)
+
+	leader, _ := election.Leader("singleton/failover-test")
+	if leader != "node-1" {
+		// If node-1 isn't leader, simulate node-2 failing so node-1 becomes leader.
+		sm.OnMemberEvent(MemberEvent{
+			Type:   MemberFailed,
+			Member: NodeMeta{ID: "node-2"},
+		})
+		election.OnMembershipChange(MemberEvent{
+			Type:   MemberFailed,
+			Member: NodeMeta{ID: "node-2"},
+		})
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	running := sm.Running()
+	if len(running) != 1 {
+		t.Errorf("expected singleton running after failover, got %v", running)
+	}
+}
+
+func TestSingleton_RemoveActorReuse(t *testing.T) {
+	rt := actor.NewRuntime(actor.WithNodeID("node-1"))
+	handler := func(_ context.Context, state any, msg actor.Message) (any, error) {
+		return state, nil
+	}
+
+	// Create and stop an actor.
+	_, err := rt.CreateActor("reuse-test", nil, handler)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt.Stop("reuse-test")
+
+	// Without RemoveActor, CreateActor would fail with duplicate ID.
+	err = rt.RemoveActor("reuse-test")
+	if err != nil {
+		t.Fatalf("RemoveActor failed: %v", err)
+	}
+
+	// Now we can reuse the ID.
+	_, err = rt.CreateActor("reuse-test", "new-state", handler)
+	if err != nil {
+		t.Fatalf("CreateActor after RemoveActor failed: %v", err)
+	}
+
+	status := rt.Status("reuse-test")
+	if status != actor.ActorRunning && status != actor.ActorStarting {
+		t.Errorf("expected running/starting, got %s", status)
+	}
+}
+
+func TestSingleton_RemoveActorStillRunning(t *testing.T) {
+	rt := actor.NewRuntime(actor.WithNodeID("node-1"))
+	handler := func(_ context.Context, state any, msg actor.Message) (any, error) {
+		return state, nil
+	}
+
+	_, err := rt.CreateActor("running-test", nil, handler)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	time.Sleep(50 * time.Millisecond)
+
+	// Should fail — actor is still running.
+	err = rt.RemoveActor("running-test")
+	if err == nil {
+		t.Fatal("expected error removing running actor")
+	}
+}
+
+func TestSingleton_LeadershipBounce_RestartsSameNode(t *testing.T) {
+	// Singleton starts on node-1, leadership moves away and back.
+	// The singleton should restart on node-1 (testing RemoveActor path).
+	election := NewRingElection("node-1")
+	election.SetMembers([]NodeMeta{{ID: "node-1"}})
+
+	rt := actor.NewRuntime(actor.WithNodeID("node-1"))
+	handler := func(_ context.Context, state any, msg actor.Message) (any, error) {
+		return state, nil
+	}
+
+	sm := NewSingletonManager(rt, election, nil)
+	sm.Register(SingletonSpec{
+		Name:    "bounce-test",
+		Handler: handler,
+	})
+	sm.Start(context.Background())
+	defer sm.Stop()
+
+	time.Sleep(50 * time.Millisecond)
+
+	if len(sm.Running()) != 1 {
+		t.Fatal("should be running initially")
+	}
+
+	// Node-2 joins, leadership may move.
+	election.OnMembershipChange(MemberEvent{
+		Type:   MemberJoin,
+		Member: NodeMeta{ID: "node-2"},
+	})
+	time.Sleep(100 * time.Millisecond)
+
+	leader, _ := election.Leader("singleton/bounce-test")
+	if leader != "node-1" {
+		// Leadership moved to node-2. Now node-2 fails, leadership returns.
+		sm.OnMemberEvent(MemberEvent{
+			Type:   MemberFailed,
+			Member: NodeMeta{ID: "node-2"},
+		})
+		election.OnMembershipChange(MemberEvent{
+			Type:   MemberFailed,
+			Member: NodeMeta{ID: "node-2"},
+		})
+		time.Sleep(100 * time.Millisecond)
+
+		running := sm.Running()
+		if len(running) != 1 {
+			t.Errorf("expected singleton to restart on node-1 after bounce, got %v", running)
+		}
+	}
+}
+
+func TestSingleton_TwoNodes_NoFlapping(t *testing.T) {
+	// Scenario: node-1 boots and starts the singleton. node-2 joins later.
+	// At no point should both nodes run the singleton simultaneously, and
+	// node-2 joining must not cause unnecessary stop/restart flapping on
+	// node-1 if node-1 remains the leader.
+
+	members1 := []NodeMeta{{ID: "node-1"}}
+
+	// Node-1 boots alone — it becomes leader for everything.
+	e1 := NewRingElection("node-1")
+	e1.SetMembers(members1)
+
+	rt1 := actor.NewRuntime(actor.WithNodeID("node-1"))
+
+	var starts1 atomic.Int64
+	var stops1 atomic.Int64
+	handler1 := func(_ context.Context, state any, msg actor.Message) (any, error) {
+		return state, nil
+	}
+
+	sm1 := NewSingletonManager(rt1, e1, nil)
+	sm1.Register(SingletonSpec{
+		Name:         "stable-singleton",
+		Handler:      handler1,
+		InitialState: "from-node-1",
+		Options: []actor.ActorOption{
+			actor.WithStartHook(func(_ context.Context, _ string) error {
+				starts1.Add(1)
+				return nil
+			}),
+			actor.WithStopHook(func(_ context.Context, _ string) error {
+				stops1.Add(1)
+				return nil
+			}),
+		},
+	})
+	sm1.Start(context.Background())
+	defer sm1.Stop()
+
+	time.Sleep(100 * time.Millisecond)
+
+	// Verify node-1 is running the singleton.
+	if len(sm1.Running()) != 1 {
+		t.Fatal("node-1 should be running the singleton as sole node")
+	}
+	if starts1.Load() != 1 {
+		t.Fatalf("expected exactly 1 start on node-1, got %d", starts1.Load())
+	}
+
+	// Node-2 boots with knowledge of both nodes.
+	e2 := NewRingElection("node-2")
+	e2.SetMembers([]NodeMeta{{ID: "node-1"}, {ID: "node-2"}})
+
+	rt2 := actor.NewRuntime(actor.WithNodeID("node-2"))
+
+	var starts2 atomic.Int64
+	handler2 := func(_ context.Context, state any, msg actor.Message) (any, error) {
+		return state, nil
+	}
+
+	sm2 := NewSingletonManager(rt2, e2, nil)
+	sm2.Register(SingletonSpec{
+		Name:    "stable-singleton",
+		Handler: handler2,
+		Options: []actor.ActorOption{
+			actor.WithStartHook(func(_ context.Context, _ string) error {
+				starts2.Add(1)
+				return nil
+			}),
+		},
+	})
+	sm2.Start(context.Background())
+	defer sm2.Stop()
+
+	// Now tell node-1's election about node-2 joining.
+	e1.OnMembershipChange(MemberEvent{
+		Type:   MemberJoin,
+		Member: NodeMeta{ID: "node-2"},
+	})
+
+	time.Sleep(200 * time.Millisecond)
+
+	// Determine who the leader is across both elections — they must agree.
+	l1, _ := e1.Leader("singleton/stable-singleton")
+	l2, _ := e2.Leader("singleton/stable-singleton")
+	if l1 != l2 {
+		t.Fatalf("elections disagree: e1=%s e2=%s", l1, l2)
+	}
+
+	running1 := sm1.Running()
+	running2 := sm2.Running()
+
+	// CRITICAL: exactly one node should be running the singleton.
+	total := len(running1) + len(running2)
+	if total != 1 {
+		t.Fatalf("expected exactly 1 instance across cluster, got node-1=%v node-2=%v", running1, running2)
+	}
+
+	// Verify the correct node is running it.
+	if l1 == "node-1" {
+		if len(running1) != 1 {
+			t.Errorf("node-1 is leader but not running: node-1=%v node-2=%v", running1, running2)
+		}
+		if len(running2) != 0 {
+			t.Errorf("node-2 is not leader but running: %v", running2)
+		}
+		// If node-1 kept leadership, it should NOT have been restarted.
+		if starts1.Load() != 1 {
+			t.Errorf("node-1 kept leadership but singleton was restarted: starts=%d stops=%d", starts1.Load(), stops1.Load())
+		}
+		if starts2.Load() != 0 {
+			t.Errorf("node-2 is not leader but started singleton %d times", starts2.Load())
+		}
+	} else {
+		// Leadership moved to node-2.
+		if len(running2) != 1 {
+			t.Errorf("node-2 is leader but not running: node-1=%v node-2=%v", running1, running2)
+		}
+		if len(running1) != 0 {
+			t.Errorf("node-1 lost leadership but still running: %v", running1)
+		}
+	}
+
+	// Extra stability check: wait a bit longer and verify nothing flaps.
+	time.Sleep(200 * time.Millisecond)
+
+	running1After := sm1.Running()
+	running2After := sm2.Running()
+	totalAfter := len(running1After) + len(running2After)
+	if totalAfter != 1 {
+		t.Fatalf("flapping detected: after settling, node-1=%v node-2=%v", running1After, running2After)
+	}
+
+	// Start counts should not have changed (no flapping).
+	if l1 == "node-1" {
+		if starts1.Load() != 1 {
+			t.Errorf("flapping on node-1: starts=%d (expected 1)", starts1.Load())
+		}
 	}
 }
