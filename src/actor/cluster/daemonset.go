@@ -268,7 +268,14 @@ func (dm *DaemonSetManager) startReplicatedDaemon(d *daemonState) {
 	var topology crdt.TopologyProvider
 
 	if dm.cluster != nil {
-		transport = NewClusterCRDTTransport(dm.cluster)
+		// Each replicated daemon needs its own envelope type to avoid
+		// collisions with the distributed registry and other daemons.
+		msgType := "__crdt_" + d.spec.Name
+		ct := NewClusterCRDTTransportWithType(dm.cluster, msgType)
+		if disp := dm.cluster.Dispatcher(); disp != nil {
+			ct.RegisterHandler(disp)
+		}
+		transport = ct
 		topology = &daemonTopology{
 			cluster:   dm.cluster,
 			placement: d.spec.Placement,

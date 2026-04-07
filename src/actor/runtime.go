@@ -251,6 +251,29 @@ func WithClusterRegistry(
 	}
 }
 
+// SetRemoteSend sets the remote send function after construction.
+// Used by cluster.Start() to wire the runtime to the cluster transport.
+func (r *Runtime) SetRemoteSend(fn RemoteSenderFunc) { r.remoteSend = fn }
+
+// SetRemoteAskSend sets the remote ask send function after construction.
+func (r *Runtime) SetRemoteAskSend(fn RemoteAskSenderFunc) { r.remoteAsk = fn }
+
+// SetClusterRegistry sets cluster-wide registry functions after construction.
+func (r *Runtime) SetClusterRegistry(
+	register func(name string, pid PID) error,
+	lookup func(name string) (PID, bool),
+	unregister func(name string) (PID, bool),
+) {
+	r.clusterRegister = register
+	r.clusterLookup = lookup
+	r.clusterUnregister = unregister
+}
+
+// SetClusterMembers sets the cluster membership query function after construction.
+func (r *Runtime) SetClusterMembers(fn func() []ClusterMemberInfo) {
+	r.clusterMembers = fn
+}
+
 // NewRuntime creates a new actor runtime with the given options.
 func NewRuntime(opts ...RuntimeOption) *Runtime {
 	r := &Runtime{

@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"sync"
 	"time"
+
+	"github.com/tripleclabs/westcoast/src/actor"
 )
 
 // ClusterConfig configures a cluster node.
@@ -46,6 +48,15 @@ type Cluster struct {
 	conns   map[NodeID]Connection // active connections by node
 	peers   map[NodeID]NodeMeta   // known live peers
 	dialing map[NodeID]bool       // dial attempts in progress
+
+	dispatcher *InboundDispatcher // set via SetDispatcher
+
+	// Owned subsystems — created by Start(), nil when using low-level API.
+	runtime      *actor.Runtime
+	election     *RingElection
+	registry     *DistributedRegistry
+	singletonMgr *SingletonManager
+	daemonMgr    *DaemonSetManager
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -134,6 +145,17 @@ func (c *Cluster) Stop() error {
 	c.started = false
 	c.cancel()
 	c.mu.Unlock()
+
+	// Stop owned subsystems (created by Start()).
+	if c.singletonMgr != nil {
+		c.singletonMgr.Stop()
+	}
+	if c.daemonMgr != nil {
+		c.daemonMgr.Stop()
+	}
+	if c.registry != nil {
+		c.registry.Close()
+	}
 
 	// Close all outbound connections.
 	c.mu.RLock()
@@ -249,6 +271,22 @@ func (c *Cluster) SetOnEnvelope(fn func(from NodeID, env Envelope)) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.cfg.OnEnvelope = fn
+}
+
+// SetDispatcher stores the inbound dispatcher so subsystems (singleton
+// manager, daemonset manager) can register system envelope handlers
+// without the caller threading it manually.
+func (c *Cluster) SetDispatcher(d *InboundDispatcher) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.dispatcher = d
+}
+
+// Dispatcher returns the inbound dispatcher, or nil if not set.
+func (c *Cluster) Dispatcher() *InboundDispatcher {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.dispatcher
 }
 
 // SetOnMemberEvent sets the callback for membership changes.
@@ -489,3 +527,66 @@ func (c *Cluster) removeConnection(nodeID NodeID) {
 		delete(c.conns, nodeID)
 	}
 }
+
+// --- High-level API (used with cluster.Start) ---
+
+// RegisterSingleton registers a singleton actor spec. The singleton will
+// start on the elected leader node and migrate via the handoff protocol
+// when leadership changes.
+func (c *Cluster) RegisterSingleton(spec SingletonSpec) {
+	if c.singletonMgr != nil {
+		c.singletonMgr.Register(spec)
+	}
+}
+
+// RegisterDaemon registers a daemon actor spec. The daemon runs on every
+// node that matches the placement predicate (all nodes if nil).
+func (c *Cluster) RegisterDaemon(spec DaemonSpec) {
+	if c.daemonMgr != nil {
+		c.daemonMgr.Register(spec)
+	}
+}
+
+// Singletons returns the singleton manager for advanced operations
+// like Running() or direct access to singleton state.
+func (c *Cluster) Singletons() *SingletonManager { return c.singletonMgr }
+
+// Daemons returns the daemon manager for advanced operations
+// like SendTo(), AskTo(), or Broadcast().
+func (c *Cluster) Daemons() *DaemonSetManager { return c.daemonMgr }
+
+// Register registers a name in the distributed registry.
+func (c *Cluster) Register(name string, pid actor.PID) error {
+	if c.registry != nil {
+		return c.registry.Register(name, pid)
+	}
+	return fmt.Errorf("cluster: no registry (use cluster.Start)")
+}
+
+// Lookup looks up a name in the distributed registry.
+func (c *Cluster) Lookup(name string) (actor.PID, bool) {
+	if c.registry != nil {
+		return c.registry.Lookup(name)
+	}
+	return actor.PID{}, false
+}
+
+// Unregister removes a name from the distributed registry.
+func (c *Cluster) Unregister(name string) {
+	if c.registry != nil {
+		c.registry.Unregister(name)
+	}
+}
+
+// Election returns the leader election for advanced operations.
+func (c *Cluster) Election() *RingElection { return c.election }
+
+// Registry returns the distributed registry for advanced operations.
+func (c *Cluster) DistributedRegistry() *DistributedRegistry { return c.registry }
+
+// NewRouter creates a ClusterRouter pre-wired to this cluster's runtime,
+// registry, and metadata. No manual dependency threading needed.
+func (c *Cluster) NewRouter() *ClusterRouter {
+	return NewClusterRouter(c.runtime, c.registry, c)
+}
+

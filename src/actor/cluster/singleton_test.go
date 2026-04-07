@@ -27,7 +27,7 @@ func TestSingleton_StartsOnLeader(t *testing.T) {
 		return state, nil
 	}
 
-	sm := NewSingletonManager(rt, election, nil, nil, nil, nil)
+	sm := NewSingletonManager(rt, election, nil, nil, nil)
 	sm.Register(SingletonSpec{
 		Name:    "my-singleton",
 		Handler: handler,
@@ -61,7 +61,7 @@ func TestSingleton_StopsOnLeadershipLoss(t *testing.T) {
 		return state, nil
 	}
 
-	sm := NewSingletonManager(rt, election, nil, nil, nil, nil)
+	sm := NewSingletonManager(rt, election, nil, nil, nil)
 	sm.Register(SingletonSpec{
 		Name:    "leader-singleton",
 		Handler: handler,
@@ -136,7 +136,7 @@ func TestSingleton_MultipleSingletons(t *testing.T) {
 		return state, nil
 	}
 
-	sm := NewSingletonManager(rt, election, nil, nil, nil, nil)
+	sm := NewSingletonManager(rt, election, nil, nil, nil)
 	sm.Register(SingletonSpec{Name: "singleton-a", Handler: handler})
 	sm.Register(SingletonSpec{Name: "singleton-b", Handler: handler})
 	sm.Register(SingletonSpec{Name: "singleton-c", Handler: handler})
@@ -163,7 +163,7 @@ func TestSingleton_StopCleansUp(t *testing.T) {
 		return state, nil
 	}
 
-	sm := NewSingletonManager(rt, election, nil, nil, nil, nil)
+	sm := NewSingletonManager(rt, election, nil, nil, nil)
 	sm.Register(SingletonSpec{Name: "cleanup-test", Handler: handler})
 	sm.Start(context.Background())
 
@@ -195,7 +195,7 @@ func TestSingleton_ClusterOfOne(t *testing.T) {
 		return state, nil
 	}
 
-	sm := NewSingletonManager(rt, election, nil, nil, nil, nil)
+	sm := NewSingletonManager(rt, election, nil, nil, nil)
 	sm.Register(SingletonSpec{
 		Name:    "solo-singleton",
 		Handler: handler,
@@ -222,7 +222,7 @@ func TestSingleton_MemberFailed_SkipsHandoff(t *testing.T) {
 		return state, nil
 	}
 
-	sm := NewSingletonManager(rt, election, nil, nil, nil, nil)
+	sm := NewSingletonManager(rt, election, nil, nil, nil)
 	sm.Register(SingletonSpec{
 		Name:    "failover-test",
 		Handler: handler,
@@ -314,7 +314,7 @@ func TestSingleton_LeadershipBounce_RestartsSameNode(t *testing.T) {
 		return state, nil
 	}
 
-	sm := NewSingletonManager(rt, election, nil, nil, nil, nil)
+	sm := NewSingletonManager(rt, election, nil, nil, nil)
 	sm.Register(SingletonSpec{
 		Name:    "bounce-test",
 		Handler: handler,
@@ -375,7 +375,7 @@ func TestSingleton_TwoNodes_NoFlapping(t *testing.T) {
 		return state, nil
 	}
 
-	sm1 := NewSingletonManager(rt1, e1, nil, nil, nil, nil)
+	sm1 := NewSingletonManager(rt1, e1, nil, nil, nil)
 	sm1.Register(SingletonSpec{
 		Name:         "stable-singleton",
 		Handler:      handler1,
@@ -415,7 +415,7 @@ func TestSingleton_TwoNodes_NoFlapping(t *testing.T) {
 		return state, nil
 	}
 
-	sm2 := NewSingletonManager(rt2, e2, nil, nil, nil, nil)
+	sm2 := NewSingletonManager(rt2, e2, nil, nil, nil)
 	sm2.Register(SingletonSpec{
 		Name:    "stable-singleton",
 		Handler: handler2,
@@ -555,7 +555,8 @@ func TestSingleton_TwoNodes_JoiningNodeDoesNotDuplicate(t *testing.T) {
 	d1.SetCluster(c1)
 	c1.SetOnEnvelope(func(from NodeID, env Envelope) { d1.Dispatch(ctx, from, env) })
 
-	sm1 := NewSingletonManager(rt1, e1, nil, c1, codec, d1)
+	c1.SetDispatcher(d1)
+	sm1 := NewSingletonManager(rt1, e1, nil, c1, codec)
 	c1.SetOnMemberEvent(func(ev MemberEvent) {
 		sm1.OnMemberEvent(ev)
 		e1.OnMembershipChange(ev)
@@ -636,7 +637,8 @@ func TestSingleton_TwoNodes_JoiningNodeDoesNotDuplicate(t *testing.T) {
 	}
 
 	// Start node-2's singleton manager. It knows about node-1 already.
-	sm2 := NewSingletonManager(rt2, e2, nil, c2, codec, d2)
+	c2.SetDispatcher(d2)
+	sm2 := NewSingletonManager(rt2, e2, nil, c2, codec)
 	c2.SetOnMemberEvent(func(ev MemberEvent) {
 		sm2.OnMemberEvent(ev)
 		e2.OnMembershipChange(ev)

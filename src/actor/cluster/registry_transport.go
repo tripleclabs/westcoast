@@ -17,25 +17,37 @@ type ClusterCRDTTransport struct {
 	cluster   *Cluster
 	localID   NodeID
 	replicaID crdt.ReplicaID
+	msgType   string // envelope TypeName for this transport instance
 
 	mu      sync.Mutex
 	recvFn  func(crdt.TransportMessage)
 }
 
 // NewClusterCRDTTransport creates a CRDT transport backed by the cluster.
+// Uses the "__registry" envelope type — suitable for the DistributedRegistry.
+// For other CRDT instances (e.g. replicated daemons), use
+// NewClusterCRDTTransportWithType to avoid message collisions.
 func NewClusterCRDTTransport(cluster *Cluster) *ClusterCRDTTransport {
+	return NewClusterCRDTTransportWithType(cluster, registryMsgType)
+}
+
+// NewClusterCRDTTransportWithType creates a CRDT transport that uses the
+// given envelope type name. Each independent CRDT instance must use a
+// unique type name to avoid message collisions on the dispatcher.
+func NewClusterCRDTTransportWithType(cluster *Cluster, msgType string) *ClusterCRDTTransport {
 	localID := cluster.LocalNodeID()
 	return &ClusterCRDTTransport{
 		cluster:   cluster,
 		localID:   localID,
 		replicaID: nodeIDToReplicaID(localID),
+		msgType:   msgType,
 	}
 }
 
 // RegisterHandler wires the transport to the inbound dispatcher so it
 // receives messages from remote peers.
 func (t *ClusterCRDTTransport) RegisterHandler(d *InboundDispatcher) {
-	d.RegisterHandler(registryMsgType, t.handleInbound)
+	d.RegisterHandler(t.msgType, t.handleInbound)
 }
 
 // Send implements crdt.Transport.
@@ -48,7 +60,7 @@ func (t *ClusterCRDTTransport) Send(ctx context.Context, peer crdt.ReplicaID, ms
 	env := Envelope{
 		SenderNode:     t.localID,
 		TargetNode:     targetNode,
-		TypeName:       registryMsgType,
+		TypeName:       t.msgType,
 		Payload:        msg.Marshal(),
 		SentAtUnixNano: time.Now().UnixNano(),
 	}

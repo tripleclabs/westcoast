@@ -94,16 +94,17 @@ type singletonHandoffResponse struct {
 // When leadership changes, the handoff protocol coordinates stopping
 // on the old leader before starting on the new one.
 type SingletonManager struct {
-	runtime    *actor.Runtime
-	election   *RingElection
-	registry   *DistributedRegistry
-	cluster    *Cluster
-	codec      Codec
-	dispatcher *InboundDispatcher
+	runtime  *actor.Runtime
+	election *RingElection
+	registry *DistributedRegistry
+	cluster  *Cluster
+	codec    Codec
 
 	mu         sync.Mutex
 	singletons map[string]*singletonState
 	cancel     context.CancelFunc
+	ctx        context.Context
+	started    bool
 
 	// Recently failed nodes — skip handoff for these.
 	failedMu    sync.Mutex
@@ -119,18 +120,17 @@ type SingletonManager struct {
 
 // NewSingletonManager creates a SingletonManager.
 //
-// For clustered operation, pass the cluster, codec, and dispatcher — these
-// enable the handoff protocol that guarantees at-most-one semantics during
-// leadership transitions. For single-node operation (or tests), pass nil
-// for all three.
-func NewSingletonManager(runtime *actor.Runtime, election *RingElection, registry *DistributedRegistry, cluster *Cluster, codec Codec, dispatcher *InboundDispatcher) *SingletonManager {
+// For clustered operation, pass the cluster and codec — these enable the
+// handoff protocol that guarantees at-most-one semantics during leadership
+// transitions. The cluster must have a dispatcher set via SetDispatcher.
+// For single-node operation (or tests), pass nil for both.
+func NewSingletonManager(runtime *actor.Runtime, election *RingElection, registry *DistributedRegistry, cluster *Cluster, codec Codec) *SingletonManager {
 	return &SingletonManager{
 		runtime:      runtime,
 		election:     election,
 		registry:     registry,
 		cluster:      cluster,
 		codec:        codec,
-		dispatcher:   dispatcher,
 		singletons:   make(map[string]*singletonState),
 		failedNodes:  make(map[NodeID]time.Time),
 		handoffWaits: make(map[string]chan singletonHandoffResponse),
@@ -139,27 +139,38 @@ func NewSingletonManager(runtime *actor.Runtime, election *RingElection, registr
 
 // clustered returns true if the manager is wired for multi-node operation.
 func (sm *SingletonManager) clustered() bool {
-	return sm.cluster != nil && sm.codec != nil && sm.dispatcher != nil
+	return sm.cluster != nil && sm.codec != nil && sm.cluster.Dispatcher() != nil
 }
 
-// Register adds a singleton spec. The actor will be started if this node
-// is currently the leader for the singleton's scope.
+// Register adds a singleton spec. If the manager is already started,
+// the singleton is immediately evaluated for leadership and a watch
+// loop is started for it.
 func (sm *SingletonManager) Register(spec SingletonSpec) {
 	sm.mu.Lock()
-	defer sm.mu.Unlock()
 	sm.singletons[spec.Name] = &singletonState{spec: spec}
+	alreadyStarted := sm.started
+	sm.mu.Unlock()
+
+	if alreadyStarted {
+		ch := sm.election.Watch("singleton/" + spec.Name)
+		go sm.watchLoop(sm.ctx, spec.Name, ch)
+		sm.reconcile()
+	}
 }
 
 // Start begins watching leadership changes and starts singletons
 // that this node is responsible for.
 func (sm *SingletonManager) Start(ctx context.Context) {
 	ctx, sm.cancel = context.WithCancel(ctx)
+	sm.ctx = ctx
+	sm.started = true
 
 	// Register system envelope handlers for handoff protocol.
 	if sm.clustered() {
 		sm.registerHandoffTypes()
-		sm.dispatcher.RegisterHandler(singletonHandoffReqType, sm.onHandoffRequest)
-		sm.dispatcher.RegisterHandler(singletonHandoffRespType, sm.onHandoffResponse)
+		d := sm.cluster.Dispatcher()
+		d.RegisterHandler(singletonHandoffReqType, sm.onHandoffRequest)
+		d.RegisterHandler(singletonHandoffRespType, sm.onHandoffResponse)
 	}
 
 	sm.mu.Lock()

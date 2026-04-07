@@ -35,27 +35,34 @@ func WithCRDTOptions(opts ...crdt.Option) RegisterReplicatedOption {
 }
 
 // RegisterReplicated registers a daemon that runs on every matching node with
-// shared CRDT-replicated state. Each instance gets an ORMap[V] that
-// converges automatically across the cluster — no explicit sync needed.
+// shared CRDT-replicated state. Each instance gets an ORMap that converges
+// automatically across the cluster — no explicit sync needed.
 //
-// The type parameter V is the map's value type. Values are gob-encoded
-// internally. The handler receives the live ORMap for reads and writes.
+// Values are gob-encoded for replication. The handler receives the live
+// ORMap for reads and writes.
 //
 // Example:
 //
-//	cluster.RegisterReplicated[Session](dm, "session-store",
-//	    func(ctx context.Context, sessions *crdt.ORMap[Session], msg actor.Message) error {
+//	c.RegisterReplicated("session-store",
+//	    func(ctx context.Context, sessions *crdt.ORMap[any], msg actor.Message) error {
 //	        switch m := msg.Payload.(type) {
 //	        case CreateSession:
 //	            sessions.Put(ctx, m.ID, m.Session)
 //	        case GetSession:
-//	            s, ok := sessions.Get(m.ID)
+//	            s, _ := sessions.Get(m.ID)
 //	            // ...
 //	        }
 //	        return nil
 //	    },
 //	)
-func RegisterReplicated[V any](dm *DaemonSetManager, name string, handler ReplicatedHandler[V], opts ...RegisterReplicatedOption) {
+func (c *Cluster) RegisterReplicated(name string, handler ReplicatedHandler[any], opts ...RegisterReplicatedOption) {
+	registerReplicated[any](c.daemonMgr, name, handler, opts...)
+}
+
+// registerReplicated is the internal generic implementation. The public
+// Cluster method uses [any]; the package-level function preserves type
+// safety for callers who want it.
+func registerReplicated[V any](dm *DaemonSetManager, name string, handler ReplicatedHandler[V], opts ...RegisterReplicatedOption) {
 	var ro replicatedOpts
 	for _, o := range opts {
 		o(&ro)
