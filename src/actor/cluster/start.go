@@ -61,12 +61,29 @@ func Start(ctx context.Context, rt *actor.Runtime, cfg Config) (*Cluster, error)
 		return nil, fmt.Errorf("cluster: Provider is required")
 	}
 
+	// If the provider implements BootstrappingProvider, let it configure
+	// Transport and Auth (e.g. via join handshake + cert generation).
+	if bp, ok := cfg.Provider.(BootstrappingProvider); ok {
+		if cfg.Transport == nil && cfg.Auth == nil {
+			transport, auth, err := bp.Bootstrap(ctx, NodeMeta{ID: nodeID, Addr: cfg.Addr})
+			if err != nil {
+				return nil, fmt.Errorf("cluster bootstrap: %w", err)
+			}
+			cfg.Transport = transport
+			cfg.Auth = auth
+		}
+	}
+
 	// Apply defaults.
 	if cfg.Codec == nil {
 		cfg.Codec = NewGobCodec()
 	}
 	if cfg.Transport == nil {
-		cfg.Transport = NewTCPTransport(nodeID)
+		if defaultTransportFactory != nil {
+			cfg.Transport = defaultTransportFactory(nodeID, nil)
+		} else {
+			cfg.Transport = NewTCPTransport(nodeID)
+		}
 	}
 	if cfg.Auth == nil {
 		cfg.Auth = NoopAuth{}

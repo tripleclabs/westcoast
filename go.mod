@@ -5,11 +5,14 @@ go 1.26.1
 require (
 	github.com/tripleclabs/crdt-go v0.0.0
 	github.com/tripleclabs/nova v0.0.0-20260330152906-9b5f04df942c
+	github.com/tripleclabs/westcoast/pkg/certmanager v0.0.0
 	google.golang.org/grpc v1.79.3
 	google.golang.org/protobuf v1.36.11
 )
 
 replace github.com/tripleclabs/crdt-go => ../crdt
+
+replace github.com/tripleclabs/westcoast/pkg/certmanager => ./pkg/certmanager
 
 require (
 	golang.org/x/net v0.52.0 // indirect

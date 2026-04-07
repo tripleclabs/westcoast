@@ -2,6 +2,7 @@ package cluster
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 )
 
@@ -45,6 +46,22 @@ type Connection interface {
 	// RemoteNodeID returns the node ID of the remote end,
 	// established during handshake.
 	RemoteNodeID() NodeID
+}
+
+// TransportFactory creates a Transport for a given node ID and optional
+// TLS config. Registered via SetDefaultTransportFactory by transport
+// packages (e.g. grpctransport).
+type TransportFactory func(nodeID NodeID, tlsCfg *tls.Config) Transport
+
+var defaultTransportFactory TransportFactory
+
+// SetDefaultTransportFactory registers the factory used by cluster.Start()
+// when no Transport is provided in the config. Import a transport package
+// to set this automatically:
+//
+//	import _ "github.com/tripleclabs/westcoast/src/actor/cluster/grpctransport"
+func SetDefaultTransportFactory(f TransportFactory) {
+	defaultTransportFactory = f
 }
 
 // InboundHandler processes events from incoming connections.

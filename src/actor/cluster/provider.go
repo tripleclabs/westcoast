@@ -1,6 +1,9 @@
 package cluster
 
-import "errors"
+import (
+	"context"
+	"errors"
+)
 
 var (
 	// ErrProviderAlreadyStarted is returned when Start is called on a running provider.
@@ -39,6 +42,16 @@ func (t MemberEventType) String() string {
 type MemberEvent struct {
 	Type   MemberEventType
 	Member NodeMeta
+}
+
+// BootstrappingProvider is a ClusterProvider that needs to run a bootstrap
+// step before the cluster transport starts listening. Bootstrap is called
+// by cluster.Start() before applying defaults for Transport and Auth —
+// the provider returns pre-configured instances (e.g. with mTLS from a
+// join handshake).
+type BootstrappingProvider interface {
+	ClusterProvider
+	Bootstrap(ctx context.Context, self NodeMeta) (Transport, ClusterAuth, error)
 }
 
 // ClusterProvider handles node discovery and membership tracking.
