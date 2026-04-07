@@ -1408,6 +1408,32 @@ func (r *Runtime) Stop(actorID string) StopResult {
 	return StopStopped
 }
 
+// StopAndCapture terminates an actor and returns its final state. The state
+// is read after the actor enters Stopping status (no more messages will be
+// processed) but before the stop hook runs. This ensures the captured state
+// is consistent — no message can interleave between capture and stop.
+func (r *Runtime) StopAndCapture(actorID string) (any, StopResult) {
+	inst, ok := r.registry.get(actorID)
+	if !ok {
+		return nil, StopNotFound
+	}
+	if r.Status(actorID) == ActorStopped {
+		return nil, StopAlready
+	}
+	inst.status.Store(int32(ActorStoppingCode))
+	// State is now frozen — the message loop will not call the handler again.
+	state := inst.state.value()
+	r.runStopHookWithTimeout(inst, inst.cfg.stopHookTimeout)
+	inst.status.Store(int32(ActorStoppedCode))
+	if v, ok := r.actorPID.Load(actorID); ok {
+		r.resolver.SetState(v.(PID), PIDRouteStopped)
+	}
+	inst.cancel()
+	inst.mailbox.Close()
+	r.cleanupRegistryForActor(actorID, RegistryUnregisterLifecycleTerm)
+	return state, StopStopped
+}
+
 // RemoveActor purges a stopped actor from the internal registry, allowing
 // its ID to be reused by a future CreateActor call. Returns ErrActorNotFound
 // if no such actor exists, or ErrActorStopped if the actor is still running

@@ -539,6 +539,16 @@ func (c *Cluster) RegisterSingleton(spec SingletonSpec) {
 	}
 }
 
+// RebalanceSingletons redistributes singletons across the cluster
+// according to the current hash ring. Call this during maintenance
+// windows after scaling up — singletons don't move automatically
+// when new nodes join.
+func (c *Cluster) RebalanceSingletons() {
+	if c.singletonMgr != nil {
+		c.singletonMgr.Rebalance()
+	}
+}
+
 // RegisterDaemon registers a daemon actor spec. The daemon runs on every
 // node that matches the placement predicate (all nodes if nil).
 func (c *Cluster) RegisterDaemon(spec DaemonSpec) {

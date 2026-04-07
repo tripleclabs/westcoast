@@ -46,13 +46,8 @@ type SingletonSpec struct {
 
 	// OnHandoff is called on the NEW leader when it receives state from
 	// the old leader. The returned value becomes InitialState for the new
-	// instance. If nil, handoff state is ignored and InitialState is used.
+	// instance. If nil, the old leader's state is used directly.
 	OnHandoff func(handoffState any) any
-
-	// CaptureState is called on the OLD leader during deactivation, after
-	// the singleton actor has been stopped. It returns the state to transfer
-	// to the new leader. If nil, no state is transferred.
-	CaptureState func(ctx context.Context, actorID string) (any, error)
 }
 
 func (s *SingletonSpec) handoffTimeout() time.Duration {
@@ -234,6 +229,42 @@ func (sm *SingletonManager) Running() []string {
 	return out
 }
 
+// Rebalance redistributes singletons across the cluster according to
+// the current hash ring. Singletons that should be on a different node
+// (according to the election) will be handed off. Use this during
+// maintenance windows after adding nodes — singletons don't move
+// automatically on join.
+func (sm *SingletonManager) Rebalance() {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	nodeID := sm.runtime.NodeID()
+
+	for name, s := range sm.singletons {
+		scope := "singleton/" + name
+		var isLeader bool
+
+		if s.spec.Placement != nil && sm.cluster != nil {
+			members := sm.cluster.Members()
+			members = append(members, sm.cluster.Self())
+			leader, ok := sm.election.LeaderAmong(scope, s.spec.Placement, members)
+			isLeader = ok && string(leader) == nodeID
+		} else {
+			isLeader = sm.election.IsLeader(scope)
+		}
+
+		currentTerm := sm.election.Term(scope)
+
+		if s.phase == phaseActive && !isLeader {
+			// We're running it but the hash says it should be elsewhere.
+			sm.loseLeadership(name, s, currentTerm)
+		}
+		if s.phase == phaseIdle && isLeader {
+			sm.gainLeadership(name, s, currentTerm)
+		}
+	}
+}
+
 // OnMemberEvent should be called when a cluster membership event occurs.
 // It tracks failed nodes so the handoff protocol can skip unreachable
 // nodes and start singletons immediately. On the first call, it marks
@@ -284,6 +315,13 @@ func (sm *SingletonManager) watchLoop(ctx context.Context, name string, ch <-cha
 
 // reconcile checks each singleton and transitions its phase based on
 // current leadership state.
+//
+// Key invariant: singletons are STICKY. A running singleton does NOT
+// move just because a new node joined and the hash ring changed. It
+// only moves when:
+//   - The current owner fails or leaves (detected via OnMemberEvent)
+//   - The user explicitly calls Rebalance()
+//   - No node is currently running it (first start or post-failure)
 func (sm *SingletonManager) reconcile() {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
@@ -305,53 +343,57 @@ func (sm *SingletonManager) reconcile() {
 
 		currentTerm := sm.election.Term(scope)
 
-		if isLeader {
-			switch s.phase {
-			case phaseIdle:
-				sm.gainLeadership(name, s, currentTerm)
-			case phaseActivating:
-				// Already activating — check if term changed.
-				if s.term != currentTerm {
-					// Term changed while activating. Cancel and restart.
-					if s.cancel != nil {
-						s.cancel()
-						s.cancel = nil
-					}
-					sm.gainLeadership(name, s, currentTerm)
-				}
-			case phaseActive:
-				// Still leader, nothing to do.
-			case phaseDeactivating:
-				// We lost leadership but then regained it before handoff completed.
-				if s.cancel != nil {
-					s.cancel()
-					s.cancel = nil
-				}
-				s.phase = phaseActive
-				s.term = currentTerm
-			}
-		} else {
-			switch s.phase {
-			case phaseActive:
-				sm.loseLeadership(name, s, currentTerm)
-			case phaseActivating:
-				// We were trying to activate but lost leadership.
+		switch s.phase {
+		case phaseActive:
+			// Singleton is running on this node. Only stop if we're
+			// receiving a handoff request (handled in onHandoffRequest)
+			// or during an explicit Rebalance. Do NOT stop just because
+			// the hash ring says someone else is the new leader.
+			continue
+
+		case phaseDeactivating:
+			// Already handing off — let it complete.
+			continue
+
+		case phaseActivating:
+			if !isLeader {
+				// Lost leadership while activating — abort.
 				if s.cancel != nil {
 					s.cancel()
 					s.cancel = nil
 				}
 				s.phase = phaseIdle
-			case phaseDeactivating:
-				// Already deactivating — check if term changed.
-				if s.term != currentTerm {
-					if s.cancel != nil {
-						s.cancel()
-						s.cancel = nil
-					}
-					sm.loseLeadership(name, s, currentTerm)
+			} else if s.term != currentTerm {
+				// Term changed while activating. Cancel and restart.
+				if s.cancel != nil {
+					s.cancel()
+					s.cancel = nil
 				}
-			case phaseIdle:
-				// Not our problem.
+				sm.gainLeadership(name, s, currentTerm)
+			}
+
+		case phaseIdle:
+			if isLeader {
+				// Check if someone else is already running this singleton.
+				// If the registry has it registered, someone owns it — don't
+				// take over (sticky). If nobody has it, we should start it.
+				alreadyOwned := false
+				if sm.registry != nil {
+					if _, ok := sm.registry.Lookup(name); ok {
+						alreadyOwned = true
+					}
+				} else {
+					// No registry — fall back to prev leader heuristic.
+					prevLeader := sm.findPrevLeader(scope)
+					if prevLeader != "" &&
+						prevLeader != NodeID(nodeID) &&
+						!sm.isRecentlyFailed(prevLeader) {
+						alreadyOwned = true
+					}
+				}
+				if !alreadyOwned {
+					sm.gainLeadership(name, s, currentTerm)
+				}
 			}
 		}
 	}
@@ -486,8 +528,12 @@ func (sm *SingletonManager) completeActivation(name string, expectedTerm uint64,
 	}
 
 	initialState := s.spec.InitialState
-	if handoffState != nil && s.spec.OnHandoff != nil {
-		initialState = s.spec.OnHandoff(handoffState)
+	if handoffState != nil {
+		if s.spec.OnHandoff != nil {
+			initialState = s.spec.OnHandoff(handoffState)
+		} else {
+			initialState = handoffState
+		}
 	}
 
 	sm.startActor(name, s, initialState)
@@ -539,19 +585,10 @@ func (sm *SingletonManager) onHandoffRequest(from NodeID, env Envelope) {
 		return
 	}
 
-	// Stop the actor while holding the lock to prevent races.
-	sm.runtime.Stop(req.Name)
-
-	// Capture state if configured.
-	var handoffState any
-	if s.spec.CaptureState != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		st, err := s.spec.CaptureState(ctx, req.Name)
-		cancel()
-		if err == nil {
-			handoffState = st
-		}
-	}
+	// Stop the actor and capture its state atomically. StopAndCapture
+	// reads the state after the actor enters Stopping (no more messages
+	// processed) but before the stop hook runs.
+	handoffState, _ := sm.runtime.StopAndCapture(req.Name)
 
 	// Cancel deactivation timeout if running.
 	if s.cancel != nil {
