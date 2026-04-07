@@ -54,6 +54,15 @@ type BootstrappingProvider interface {
 	Bootstrap(ctx context.Context, self NodeMeta) (Transport, ClusterAuth, error)
 }
 
+// SeedProvider is an optional interface that providers implement to
+// indicate whether they expect to discover peers. When a provider has
+// seeds, cluster.Start() waits for at least one peer connection before
+// starting singletons — preventing duplicate instances when two nodes
+// boot independently and then discover each other.
+type SeedProvider interface {
+	HasSeeds() bool
+}
+
 // ClusterProvider handles node discovery and membership tracking.
 // Implementations range from static seed lists to dynamic service discovery.
 type ClusterProvider interface {

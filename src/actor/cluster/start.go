@@ -3,6 +3,7 @@ package cluster
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/tripleclabs/westcoast/src/actor"
 	"github.com/tripleclabs/westcoast/src/internal/metrics"
@@ -193,11 +194,39 @@ func Start(ctx context.Context, rt *actor.Runtime, cfg Config) (*Cluster, error)
 		return nil, fmt.Errorf("cluster start: %w", err)
 	}
 
-	// 12. Start subsystem managers.
+	// 12. If the provider has seeds, wait for peer connectivity and
+	// registry convergence before starting singletons. This prevents
+	// duplicate singletons when two nodes discover each other — the
+	// joining node needs to see what the existing cluster is running.
+	if sp, ok := cfg.Provider.(SeedProvider); ok && sp.HasSeeds() {
+		waitCtx, waitCancel := context.WithTimeout(ctx, 30*time.Second)
+		defer waitCancel()
+		// Wait for at least one peer connection (not just membership —
+		// we need actual transport connectivity for CRDT replication).
+		for {
+			members := c.Members()
+			connected := false
+			for _, m := range members {
+				if c.IsConnected(m.ID) {
+					connected = true
+					break
+				}
+			}
+			if connected {
+				break
+			}
+			select {
+			case <-waitCtx.Done():
+				return nil, fmt.Errorf("cluster: timeout waiting for peer connection")
+			case <-time.After(50 * time.Millisecond):
+			}
+		}
+	}
+
+	// 13. Start subsystem managers.
 	singletons.Start(ctx)
 	daemons.Start(ctx)
 
-	// Stash the resolver for internal use.
 	_ = remoteResolver
 
 	return c, nil

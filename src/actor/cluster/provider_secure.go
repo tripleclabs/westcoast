@@ -163,6 +163,11 @@ func (sp *SecureFixedProvider) Events() <-chan MemberEvent {
 	return sp.inner.Events()
 }
 
+// HasSeeds implements SeedProvider.
+func (sp *SecureFixedProvider) HasSeeds() bool {
+	return len(sp.cfg.Seeds) > 0
+}
+
 // AddSeed exposes the inner provider's AddSeed for manual seed addition.
 func (sp *SecureFixedProvider) AddSeed(meta NodeMeta) {
 	sp.inner.AddSeed(meta)

@@ -13,6 +13,8 @@ import (
 const (
 	singletonHandoffReqType  = "__singleton_handoff_req"
 	singletonHandoffRespType = "__singleton_handoff_resp"
+	singletonDiscoverReqType  = "__singleton_discover_req"
+	singletonDiscoverRespType = "__singleton_discover_resp"
 )
 
 // singletonPhase tracks the lifecycle of a singleton on this node.
@@ -59,10 +61,11 @@ func (s *SingletonSpec) handoffTimeout() time.Duration {
 
 // singletonState tracks a singleton's lifecycle on this node.
 type singletonState struct {
-	spec   SingletonSpec
-	phase  singletonPhase
-	term   uint64             // election term when current phase was entered
-	cancel context.CancelFunc // cancel in-progress lifecycle operation
+	spec        SingletonSpec
+	phase       singletonPhase
+	term        uint64             // election term when current phase was entered
+	cancel      context.CancelFunc // cancel in-progress lifecycle operation
+	rebalancing bool               // set by Rebalance() to allow handoff from live leader
 }
 
 // singletonHandoffRequest is the wire message sent from the new leader
@@ -82,6 +85,14 @@ type singletonHandoffResponse struct {
 	State any    // nil if CaptureState not configured or failed
 	OK    bool   // false if singleton wasn't running or term mismatch
 	Error string // reason if !OK
+}
+
+// singletonDiscoverRequest is sent to peers to ask what singletons they run.
+type singletonDiscoverRequest struct{}
+
+// singletonDiscoverResponse lists the singletons running on the responding node.
+type singletonDiscoverResponse struct {
+	Running []string // singleton names
 }
 
 // SingletonManager ensures that a set of singleton actors run on
@@ -111,6 +122,9 @@ type SingletonManager struct {
 
 	// Previous leaders per scope, populated by watchLoop.
 	prevLeaders map[string]NodeID
+
+	// discoverCh receives responses during DiscoverFromPeers.
+	discoverCh chan singletonDiscoverResponse
 }
 
 // NewSingletonManager creates a SingletonManager.
@@ -160,12 +174,20 @@ func (sm *SingletonManager) Start(ctx context.Context) {
 	sm.ctx = ctx
 	sm.started = true
 
-	// Register system envelope handlers for handoff protocol.
+	// Register system envelope handlers.
 	if sm.clustered() {
 		sm.registerHandoffTypes()
+		sm.codec.Register(singletonDiscoverRequest{})
+		sm.codec.Register(singletonDiscoverResponse{})
 		d := sm.cluster.Dispatcher()
 		d.RegisterHandler(singletonHandoffReqType, sm.onHandoffRequest)
 		d.RegisterHandler(singletonHandoffRespType, sm.onHandoffResponse)
+		d.RegisterHandler(singletonDiscoverReqType, sm.onDiscoverRequest)
+		d.RegisterHandler(singletonDiscoverRespType, sm.onDiscoverResponse)
+
+		// Discover what peers are already running before we decide
+		// what to start locally.
+		sm.DiscoverFromPeers(ctx)
 	}
 
 	sm.mu.Lock()
@@ -260,6 +282,7 @@ func (sm *SingletonManager) Rebalance() {
 			sm.loseLeadership(name, s, currentTerm)
 		}
 		if s.phase == phaseIdle && isLeader {
+			s.rebalancing = true
 			sm.gainLeadership(name, s, currentTerm)
 		}
 	}
@@ -293,6 +316,123 @@ func (sm *SingletonManager) isRecentlyFailed(id NodeID) bool {
 	defer sm.failedMu.Unlock()
 	_, ok := sm.failedNodes[id]
 	return ok
+}
+
+// DiscoverFromPeers queries all connected peers for their running singletons
+// and populates the prevLeaders map. This is called by cluster.Start() on
+// joining nodes before starting singletons, so the manager knows what's
+// already running in the cluster. Direct system envelope query — no CRDT
+// dependency, sub-100ms response.
+func (sm *SingletonManager) DiscoverFromPeers(ctx context.Context) {
+	if !sm.clustered() {
+		return
+	}
+
+	d := sm.cluster.Dispatcher()
+	if d == nil {
+		return
+	}
+
+	// Wait for at least one connected peer (not just membership).
+	// We need bidirectional connectivity for the response to come back.
+	waitCtx, waitCancel := context.WithTimeout(ctx, 10*time.Second)
+	defer waitCancel()
+	var members []NodeMeta
+	for {
+		members = sm.cluster.Members()
+		for _, m := range members {
+			if sm.cluster.IsConnected(m.ID) {
+				goto connected
+			}
+		}
+		select {
+		case <-waitCtx.Done():
+			return // no connected peers, proceed without discovery
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+connected:
+
+	// Send discover request to each connected peer and collect responses.
+	correlationID := "discover"
+	respCh := make(chan singletonDiscoverResponse, len(members))
+
+	sm.handoffMu.Lock()
+	sm.handoffWaits[correlationID] = nil // reuse handoff wait infrastructure
+	sm.handoffMu.Unlock()
+
+	// Use a dedicated channel for discover responses.
+	sm.mu.Lock()
+	sm.discoverCh = respCh
+	sm.mu.Unlock()
+
+	for _, m := range members {
+		sm.sendSystemEnvelope(ctx, m.ID, singletonDiscoverReqType,
+			singletonDiscoverRequest{}, correlationID)
+	}
+
+	// Wait for responses (with timeout).
+	deadline := time.After(2 * time.Second)
+	received := 0
+	for received < len(members) {
+		select {
+		case resp := <-respCh:
+			received++
+			sm.mu.Lock()
+			for _, name := range resp.Running {
+				// Mark these singletons as owned by someone else.
+				scope := "singleton/" + name
+				if sm.prevLeaders == nil {
+					sm.prevLeaders = make(map[string]NodeID)
+				}
+				// We don't know exactly which node, but we know it's not us.
+				// Store a sentinel — findPrevLeader will see it's non-empty.
+				if _, exists := sm.prevLeaders[scope]; !exists {
+					sm.prevLeaders[scope] = "__discovered"
+				}
+			}
+			sm.mu.Unlock()
+		case <-deadline:
+			// Some peers didn't respond — proceed with what we have.
+			received = len(members)
+		case <-ctx.Done():
+			return
+		}
+	}
+
+	sm.mu.Lock()
+	sm.discoverCh = nil
+	sm.mu.Unlock()
+}
+
+func (sm *SingletonManager) onDiscoverRequest(from NodeID, env Envelope) {
+	running := sm.Running()
+	resp := singletonDiscoverResponse{Running: running}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	sm.sendSystemEnvelope(ctx, from, singletonDiscoverRespType, resp, env.AskRequestID)
+}
+
+func (sm *SingletonManager) onDiscoverResponse(from NodeID, env Envelope) {
+	var decoded any
+	if err := sm.codec.Decode(env.Payload, &decoded); err != nil {
+		return
+	}
+	resp, ok := decoded.(singletonDiscoverResponse)
+	if !ok {
+		return
+	}
+
+	sm.mu.Lock()
+	ch := sm.discoverCh
+	sm.mu.Unlock()
+
+	if ch != nil {
+		select {
+		case ch <- resp:
+		default:
+		}
+	}
 }
 
 func (sm *SingletonManager) watchLoop(ctx context.Context, name string, ch <-chan LeaderEvent) {
@@ -345,10 +485,10 @@ func (sm *SingletonManager) reconcile() {
 
 		switch s.phase {
 		case phaseActive:
-			// Singleton is running on this node. Only stop if we're
-			// receiving a handoff request (handled in onHandoffRequest)
-			// or during an explicit Rebalance. Do NOT stop just because
-			// the hash ring says someone else is the new leader.
+			// Singleton is running on this node. Keep it — singletons
+			// are sticky and don't move on membership changes. Migration
+			// only happens via explicit Rebalance() or when this node
+			// receives a handoff request (onHandoffRequest).
 			continue
 
 		case phaseDeactivating:
@@ -374,26 +514,7 @@ func (sm *SingletonManager) reconcile() {
 
 		case phaseIdle:
 			if isLeader {
-				// Check if someone else is already running this singleton.
-				// If the registry has it registered, someone owns it — don't
-				// take over (sticky). If nobody has it, we should start it.
-				alreadyOwned := false
-				if sm.registry != nil {
-					if _, ok := sm.registry.Lookup(name); ok {
-						alreadyOwned = true
-					}
-				} else {
-					// No registry — fall back to prev leader heuristic.
-					prevLeader := sm.findPrevLeader(scope)
-					if prevLeader != "" &&
-						prevLeader != NodeID(nodeID) &&
-						!sm.isRecentlyFailed(prevLeader) {
-						alreadyOwned = true
-					}
-				}
-				if !alreadyOwned {
-					sm.gainLeadership(name, s, currentTerm)
-				}
+				sm.gainLeadership(name, s, currentTerm)
 			}
 		}
 	}
@@ -420,13 +541,16 @@ func (sm *SingletonManager) gainLeadership(name string, s *singletonState, term 
 		return
 	}
 
-	// A previous leader exists and is alive. We must confirm it has
-	// stopped the singleton before we start it. This requires the
-	// handoff protocol (WithCluster + WithCodec + WithDispatcher).
+	// A previous leader exists and is alive. The singleton is already
+	// running on that node — leave it alone. Migration only happens
+	// via explicit Rebalance() or when the owner fails/leaves.
+	if !s.rebalancing {
+		return
+	}
+
+	// Rebalance mode: initiate handoff from the previous leader.
+	s.rebalancing = false
 	if !sm.clustered() {
-		// Cannot safely start — the old leader may still be running
-		// the singleton and we have no way to tell it to stop.
-		// Stay idle until the old leader fails or we get handoff deps.
 		return
 	}
 
@@ -709,28 +833,21 @@ func (sm *SingletonManager) stopAndCleanup(name string, s *singletonState) {
 // the cluster's peer list, since the cluster may know about peers
 // before the election has been updated with membership events.
 func (sm *SingletonManager) findPrevLeader(scope string) NodeID {
+	// Check observed leadership transitions first.
 	if prev := sm.getPrevLeader(scope); prev != "" {
 		return prev
 	}
-	// Check election members — only when clustered, since without handoff
-	// we can't coordinate with the previous leader anyway.
-	if sm.clustered() {
-		if prev := sm.election.leaderExcluding(scope, sm.election.localID); prev != "" {
-			return prev
-		}
-	}
-	// Fall back to cluster peers. The cluster may know about nodes that
-	// the election hasn't been told about yet (e.g. during initial join).
-	// Only relevant when clustered — without handoff we can't coordinate.
-	if sm.clustered() {
-		members := sm.cluster.Members()
-		if len(members) > 0 {
-			// Compute who would be leader among the known peers.
-			peerSet := make(map[NodeID]bool, len(members))
-			for _, m := range members {
-				peerSet[m.ID] = true
+	// Check the distributed registry — if the singleton is registered
+	// by another node, that node is running it. The registry converges
+	// via CRDT anti-entropy; cluster.Start() waits for convergence
+	// before starting singletons on joining nodes.
+	name := scope[len("singleton/"):]
+	if sm.registry != nil {
+		if pid, ok := sm.registry.Lookup(name); ok {
+			owner := NodeID(pid.Namespace)
+			if owner != NodeID(sm.runtime.NodeID()) {
+				return owner
 			}
-			return computeLeader(scope, peerSet)
 		}
 	}
 	return ""

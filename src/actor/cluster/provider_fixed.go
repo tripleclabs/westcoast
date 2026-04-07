@@ -216,6 +216,13 @@ func (p *FixedProvider) DroppedEvents() uint64 {
 // alive. The node will be discovered on the next heartbeat cycle when the
 // probe succeeds. This is safer than AddMember when the target node may
 // not be ready to accept connections yet.
+// HasSeeds implements SeedProvider.
+func (p *FixedProvider) HasSeeds() bool {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return len(p.cfg.Seeds) > 0
+}
+
 func (p *FixedProvider) AddSeed(meta NodeMeta) {
 	p.mu.Lock()
 	defer p.mu.Unlock()

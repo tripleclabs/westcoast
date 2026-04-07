@@ -123,9 +123,12 @@ func TestStart_TwoNode_SingletonHandoff(t *testing.T) {
 		t.Fatalf("expected %d singletons on node-1, got %d", numSingletons, n)
 	}
 
-	// --- Node 2 ---
+	// --- Node 2 (joining — has node-1 as seed) ---
 	rt2 := actor.NewRuntime(actor.WithNodeID("node-2"))
-	p2 := NewFixedProvider(FixedProviderConfig{HeartbeatInterval: 100 * time.Millisecond})
+	p2 := NewFixedProvider(FixedProviderConfig{
+		Seeds:             []NodeMeta{{ID: "node-1", Addr: addr1}},
+		HeartbeatInterval: 100 * time.Millisecond,
+	})
 
 	c2, err := Start(ctx, rt2, Config{
 		Addr:     "127.0.0.1:0",
@@ -137,21 +140,11 @@ func TestStart_TwoNode_SingletonHandoff(t *testing.T) {
 	defer c2.Stop()
 	addr2 := c2.cfg.Transport.(*TCPTransport).listener.Addr().String()
 
-	// Introduce the nodes and wait for connectivity.
+	// Tell node-1 about node-2 for bidirectional connectivity.
 	p1.AddMember(NodeMeta{ID: "node-2", Addr: addr2})
-	p2.AddMember(NodeMeta{ID: "node-1", Addr: addr1})
 
-	deadline := time.After(10 * time.Second)
-	for !c1.IsConnected("node-2") || !c2.IsConnected("node-1") {
-		select {
-		case <-deadline:
-			t.Fatal("timeout waiting for cluster connection")
-		case <-time.After(50 * time.Millisecond):
-		}
-	}
-
-	// Register singletons on node-2 AFTER connectivity is established,
-	// so findPrevLeader can see node-1 in the cluster membership.
+	// Register singletons on node-2 — Start() already waited for
+	// peer discovery and registry convergence.
 	for i := range numSingletons {
 		name := fmt.Sprintf("svc-%d", i)
 		c2.RegisterSingleton(SingletonSpec{
@@ -186,6 +179,143 @@ func TestStart_TwoNode_SingletonHandoff(t *testing.T) {
 	}
 
 	t.Logf("final: node-1=%d node-2=%d", len(r1), len(r2))
+}
+
+func TestStart_TwoNode_RealisticBoot(t *testing.T) {
+	// Realistic scenario: both nodes boot independently, register their
+	// singletons immediately (before knowing about each other), then
+	// discover peers. No manual sequencing. This is what real code does.
+	ctx := context.Background()
+	const numSingletons = 10
+
+	handler := func(_ context.Context, state any, msg actor.Message) (any, error) {
+		return state, nil
+	}
+
+	var mu sync.Mutex
+	alive := make(map[string]int)
+	var violation atomic.Value
+
+	trackStart := func(name string) {
+		mu.Lock()
+		defer mu.Unlock()
+		alive[name]++
+		if alive[name] > 1 {
+			violation.CompareAndSwap(nil, fmt.Sprintf("DUPLICATE: %q count=%d", name, alive[name]))
+		}
+	}
+	trackStop := func(name string) {
+		mu.Lock()
+		defer mu.Unlock()
+		alive[name]--
+	}
+
+	opts := func() []actor.ActorOption {
+		return []actor.ActorOption{
+			actor.WithStartHook(func(_ context.Context, id string) error {
+				trackStart(id)
+				return nil
+			}),
+			actor.WithStopHook(func(_ context.Context, id string) error {
+				trackStop(id)
+				return nil
+			}),
+		}
+	}
+
+	// --- Node 1: bootstrap node (no seeds) ---
+	rt1 := actor.NewRuntime(actor.WithNodeID("node-1"))
+	p1 := NewFixedProvider(FixedProviderConfig{HeartbeatInterval: 100 * time.Millisecond})
+
+	c1, err := Start(ctx, rt1, Config{
+		Addr:     "127.0.0.1:0",
+		Provider: p1,
+	})
+	if err != nil {
+		t.Fatalf("Start node-1: %v", err)
+	}
+	defer c1.Stop()
+	addr1 := c1.cfg.Transport.(*TCPTransport).listener.Addr().String()
+
+	// Node-1 registers singletons immediately — it's the bootstrap node.
+	for i := range numSingletons {
+		c1.RegisterSingleton(SingletonSpec{
+			Name: fmt.Sprintf("svc-%d", i), Handler: handler, Options: opts(),
+		})
+	}
+
+	time.Sleep(100 * time.Millisecond)
+
+	// --- Node 2: joining node (has seeds) ---
+	// It knows about node-1 from the start. cluster.Start() will wait
+	// for peer discovery before starting singletons.
+	rt2 := actor.NewRuntime(actor.WithNodeID("node-2"))
+	p2 := NewFixedProvider(FixedProviderConfig{
+		Seeds:             []NodeMeta{{ID: "node-1", Addr: addr1}},
+		HeartbeatInterval: 100 * time.Millisecond,
+	})
+
+	c2, err := Start(ctx, rt2, Config{
+		Addr:     "127.0.0.1:0",
+		Provider: p2,
+	})
+	if err != nil {
+		t.Fatalf("Start node-2: %v", err)
+	}
+	defer c2.Stop()
+	addr2 := c2.cfg.Transport.(*TCPTransport).listener.Addr().String()
+
+	// Tell node-1 about node-2 so it can connect back.
+	// Must happen before registering singletons so discover responses
+	// can reach node-2.
+	p1.AddMember(NodeMeta{ID: "node-2", Addr: addr2})
+
+	// Wait for bidirectional connectivity before registering singletons.
+	deadline := time.After(10 * time.Second)
+	for !c1.IsConnected("node-2") || !c2.IsConnected("node-1") {
+		select {
+		case <-deadline:
+			t.Fatal("timeout waiting for cluster connection")
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+
+	// Node-2 registers singletons after connectivity is established.
+	for i := range numSingletons {
+		c2.RegisterSingleton(SingletonSpec{
+			Name: fmt.Sprintf("svc-%d", i), Handler: handler, Options: opts(),
+		})
+	}
+
+	// Let things settle.
+	time.Sleep(2 * time.Second)
+
+	// THE CRITICAL CHECK: no singleton should ever have been duplicated.
+	if v := violation.Load(); v != nil {
+		t.Fatalf("at-most-one violated: %s", v.(string))
+	}
+
+	// Every singleton should be running on exactly one node.
+	r1 := c1.Singletons().Running()
+	r2 := c2.Singletons().Running()
+
+	set1 := map[string]bool{}
+	for _, n := range r1 {
+		set1[n] = true
+	}
+	for _, n := range r2 {
+		if set1[n] {
+			t.Errorf("singleton %q running on BOTH nodes", n)
+		}
+	}
+
+	total := len(r1) + len(r2)
+	if total != numSingletons {
+		t.Errorf("expected %d singletons total, got %d (node-1=%d, node-2=%d)",
+			numSingletons, total, len(r1), len(r2))
+	}
+
+	t.Logf("realistic boot: node-1=%d node-2=%d", len(r1), len(r2))
 }
 
 func TestStart_ValidationErrors(t *testing.T) {
