@@ -12,8 +12,8 @@ func TestGossipProtocol_ProducesAndSends(t *testing.T) {
 	ctx := context.Background()
 	codec := NewGobCodec()
 
-	transport1 := NewTCPTransport("node-1")
-	transport2 := NewTCPTransport("node-2")
+	transport1 := newTestTransport("node-1")
+	transport2 := newTestTransport("node-2")
 	provider1 := NewFixedProvider(FixedProviderConfig{})
 	provider2 := NewFixedProvider(FixedProviderConfig{})
 
@@ -34,8 +34,8 @@ func TestGossipProtocol_ProducesAndSends(t *testing.T) {
 	defer c1.Stop()
 	defer c2.Stop()
 
-	addr1 := transport1.listener.Addr().String()
-	addr2 := transport2.listener.Addr().String()
+	addr1 := testTransportAddr(transport1)
+	addr2 := testTransportAddr(transport2)
 	provider1.AddMember(NodeMeta{ID: "node-2", Addr: addr2})
 	provider2.AddMember(NodeMeta{ID: "node-1", Addr: addr1})
 
@@ -109,8 +109,8 @@ func TestDistributedRegistry_ReplicatesViaCRDTTransport(t *testing.T) {
 	codec := NewGobCodec()
 	codec.Register(actor.PID{})
 
-	transport1 := NewTCPTransport("node-1")
-	transport2 := NewTCPTransport("node-2")
+	transport1 := newTestTransport("node-1")
+	transport2 := newTestTransport("node-2")
 	provider1 := NewFixedProvider(FixedProviderConfig{})
 	provider2 := NewFixedProvider(FixedProviderConfig{})
 
@@ -157,8 +157,8 @@ func TestDistributedRegistry_ReplicatesViaCRDTTransport(t *testing.T) {
 	defer c1.Stop()
 	defer c2.Stop()
 
-	addr1 := transport1.listener.Addr().String()
-	addr2 := transport2.listener.Addr().String()
+	addr1 := testTransportAddr(transport1)
+	addr2 := testTransportAddr(transport2)
 	provider1.AddMember(NodeMeta{ID: "node-2", Addr: addr2})
 	provider2.AddMember(NodeMeta{ID: "node-1", Addr: addr1})
 

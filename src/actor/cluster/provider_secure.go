@@ -129,12 +129,10 @@ func (sp *SecureFixedProvider) Bootstrap(ctx context.Context, self NodeMeta) (Tr
 	// Merge: server needs ClientAuth, client needs RootCAs.
 	tlsCfg.RootCAs = clientTLS.RootCAs
 
-	var transport Transport
-	if defaultTransportFactory != nil {
-		transport = defaultTransportFactory(self.ID, tlsCfg)
-	} else {
-		transport = NewTCPTransportWithConfig(self.ID, TCPTransportConfig{TLS: tlsCfg})
+	if defaultTransportFactory == nil {
+		return nil, nil, fmt.Errorf("no transport factory registered (import grpctransport)")
 	}
+	transport := defaultTransportFactory(self.ID, tlsCfg)
 	auth := NewCertAuth(sp.ca.Cert, sp.node.Cert)
 
 	return transport, auth, nil

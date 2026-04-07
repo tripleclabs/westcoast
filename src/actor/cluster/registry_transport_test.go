@@ -16,14 +16,14 @@ func TestRegistryReplication_TwoNodes(t *testing.T) {
 
 	// Node 1.
 	p1 := NewFixedProvider(FixedProviderConfig{HeartbeatInterval: 100 * time.Millisecond})
-	t1 := NewTCPTransport("node-1")
+	t1 := newTestTransport("node-1")
 	c1, _ := NewCluster(ClusterConfig{
 		Self: NodeMeta{ID: "node-1", Addr: "127.0.0.1:0"}, Provider: p1,
 		Transport: t1, Auth: NoopAuth{}, Codec: codec,
 	})
 	c1.Start(ctx)
 	defer c1.Stop()
-	addr1 := t1.listener.Addr().String()
+	addr1 := testTransportAddr(t1)
 
 	d1 := NewInboundDispatcher(&noopBridge{nodeID: "node-1"}, codec)
 	d1.SetCluster(c1)
@@ -34,14 +34,14 @@ func TestRegistryReplication_TwoNodes(t *testing.T) {
 
 	// Node 2.
 	p2 := NewFixedProvider(FixedProviderConfig{HeartbeatInterval: 100 * time.Millisecond})
-	t2 := NewTCPTransport("node-2")
+	t2 := newTestTransport("node-2")
 	c2, _ := NewCluster(ClusterConfig{
 		Self: NodeMeta{ID: "node-2", Addr: "127.0.0.1:0"}, Provider: p2,
 		Transport: t2, Auth: NoopAuth{}, Codec: codec,
 	})
 	c2.Start(ctx)
 	defer c2.Stop()
-	addr2 := t2.listener.Addr().String()
+	addr2 := testTransportAddr(t2)
 
 	d2 := NewInboundDispatcher(&noopBridge{nodeID: "node-2"}, codec)
 	d2.SetCluster(c2)
@@ -99,7 +99,7 @@ func TestRegistryReplication_ViaClusterStart(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer c1.Stop()
-	addr1 := c1.cfg.Transport.(*TCPTransport).listener.Addr().String()
+	addr1 := testTransportAddr(c1.cfg.Transport)
 
 	rt2 := actor.NewRuntime(actor.WithNodeID("node-2"))
 	p2 := NewFixedProvider(FixedProviderConfig{
@@ -111,7 +111,7 @@ func TestRegistryReplication_ViaClusterStart(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer c2.Stop()
-	addr2 := c2.cfg.Transport.(*TCPTransport).listener.Addr().String()
+	addr2 := testTransportAddr(c2.cfg.Transport)
 
 	p1.AddMember(NodeMeta{ID: "node-2", Addr: addr2})
 

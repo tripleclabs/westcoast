@@ -23,6 +23,7 @@ import (
 
 	"github.com/tripleclabs/westcoast/src/actor"
 	"github.com/tripleclabs/westcoast/src/actor/cluster"
+	"github.com/tripleclabs/westcoast/src/actor/cluster/grpctransport"
 )
 
 type peers []string
@@ -67,7 +68,7 @@ func main() {
 		seeds = append(seeds, cluster.NodeMeta{ID: cluster.NodeID(parts[0]), Addr: parts[1]})
 	}
 
-	transport := cluster.NewTCPTransport(cluster.NodeID(nodeID))
+	transport := grpctransport.New(cluster.NodeID(nodeID))
 	provider := cluster.NewFixedProvider(cluster.FixedProviderConfig{
 		Seeds:             seeds,
 		HeartbeatInterval: 2 * time.Second,

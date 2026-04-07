@@ -10,7 +10,7 @@ import (
 
 func TestDaemonSet_PlacementMatchStarts(t *testing.T) {
 	provider := NewFixedProvider(FixedProviderConfig{})
-	transport := NewTCPTransport("node-1")
+	transport := newTestTransport("node-1")
 	c, _ := NewCluster(ClusterConfig{
 		Self:      NodeMeta{ID: "node-1", Addr: "127.0.0.1:0", Tags: map[string]string{"gpus": "4"}},
 		Provider:  provider,
@@ -40,7 +40,7 @@ func TestDaemonSet_PlacementMatchStarts(t *testing.T) {
 
 func TestDaemonSet_PlacementNoMatchSkips(t *testing.T) {
 	provider := NewFixedProvider(FixedProviderConfig{})
-	transport := NewTCPTransport("node-1")
+	transport := newTestTransport("node-1")
 	c, _ := NewCluster(ClusterConfig{
 		Self:      NodeMeta{ID: "node-1", Addr: "127.0.0.1:0", Tags: map[string]string{"gpus": "0"}},
 		Provider:  provider,
@@ -69,7 +69,7 @@ func TestDaemonSet_PlacementNoMatchSkips(t *testing.T) {
 
 func TestDaemonSet_PlacementReactiveStart(t *testing.T) {
 	provider := NewFixedProvider(FixedProviderConfig{})
-	transport := NewTCPTransport("node-1")
+	transport := newTestTransport("node-1")
 	c, _ := NewCluster(ClusterConfig{
 		Self:      NodeMeta{ID: "node-1", Addr: "127.0.0.1:0", Tags: map[string]string{}},
 		Provider:  provider,
@@ -109,7 +109,7 @@ func TestDaemonSet_PlacementReactiveStart(t *testing.T) {
 
 func TestDaemonSet_PlacementReactiveStop(t *testing.T) {
 	provider := NewFixedProvider(FixedProviderConfig{})
-	transport := NewTCPTransport("node-1")
+	transport := newTestTransport("node-1")
 	c, _ := NewCluster(ClusterConfig{
 		Self:      NodeMeta{ID: "node-1", Addr: "127.0.0.1:0", Tags: map[string]string{"gpus": "4"}},
 		Provider:  provider,
@@ -170,8 +170,8 @@ func TestDaemonSet_BroadcastRespectsPlacement(t *testing.T) {
 	codec := NewGobCodec()
 	codec.Register("")
 
-	transport1 := NewTCPTransport("node-1")
-	transport2 := NewTCPTransport("node-2")
+	transport1 := newTestTransport("node-1")
+	transport2 := newTestTransport("node-2")
 	provider1 := NewFixedProvider(FixedProviderConfig{})
 	provider2 := NewFixedProvider(FixedProviderConfig{})
 
@@ -197,7 +197,7 @@ func TestDaemonSet_BroadcastRespectsPlacement(t *testing.T) {
 	defer c1.Stop()
 	defer c2.Stop()
 
-	addr2 := transport2.listener.Addr().String()
+	addr2 := testTransportAddr(transport2)
 	provider1.AddMember(NodeMeta{ID: "node-2", Addr: addr2, Tags: map[string]string{"role": "cpu"}})
 
 	deadline := time.After(3 * time.Second)

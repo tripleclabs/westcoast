@@ -94,8 +94,8 @@ func TestDaemonSet_SendTo_Remote(t *testing.T) {
 	codec := NewGobCodec()
 	codec.Register("")
 
-	transport1 := NewTCPTransport("node-1")
-	transport2 := NewTCPTransport("node-2")
+	transport1 := newTestTransport("node-1")
+	transport2 := newTestTransport("node-2")
 	provider1 := NewFixedProvider(FixedProviderConfig{})
 	provider2 := NewFixedProvider(FixedProviderConfig{})
 
@@ -122,7 +122,7 @@ func TestDaemonSet_SendTo_Remote(t *testing.T) {
 	defer c1.Stop()
 	defer c2.Stop()
 
-	addr2 := transport2.listener.Addr().String()
+	addr2 := testTransportAddr(transport2)
 	provider1.AddMember(NodeMeta{ID: "node-2", Addr: addr2})
 
 	deadline := time.After(3 * time.Second)
@@ -167,8 +167,8 @@ func TestDaemonSet_AskTo_Remote(t *testing.T) {
 	codec.Register("")
 	codec.Register(actor.AskReplyEnvelope{})
 
-	transport1 := NewTCPTransport("node-1")
-	transport2 := NewTCPTransport("node-2")
+	transport1 := newTestTransport("node-1")
+	transport2 := newTestTransport("node-2")
 	provider1 := NewFixedProvider(FixedProviderConfig{})
 	provider2 := NewFixedProvider(FixedProviderConfig{})
 
@@ -207,8 +207,8 @@ func TestDaemonSet_AskTo_Remote(t *testing.T) {
 	defer c1.Stop()
 	defer c2.Stop()
 
-	addr1 := transport1.listener.Addr().String()
-	addr2 := transport2.listener.Addr().String()
+	addr1 := testTransportAddr(transport1)
+	addr2 := testTransportAddr(transport2)
 	provider1.AddMember(NodeMeta{ID: "node-2", Addr: addr2})
 	provider2.AddMember(NodeMeta{ID: "node-1", Addr: addr1})
 
@@ -273,8 +273,8 @@ func TestDaemonSet_Broadcast(t *testing.T) {
 	codec := NewGobCodec()
 	codec.Register("")
 
-	transport1 := NewTCPTransport("node-1")
-	transport2 := NewTCPTransport("node-2")
+	transport1 := newTestTransport("node-1")
+	transport2 := newTestTransport("node-2")
 	provider1 := NewFixedProvider(FixedProviderConfig{})
 	provider2 := NewFixedProvider(FixedProviderConfig{})
 
@@ -300,7 +300,7 @@ func TestDaemonSet_Broadcast(t *testing.T) {
 	defer c1.Stop()
 	defer c2.Stop()
 
-	addr2 := transport2.listener.Addr().String()
+	addr2 := testTransportAddr(transport2)
 	provider1.AddMember(NodeMeta{ID: "node-2", Addr: addr2})
 
 	deadline := time.After(3 * time.Second)
@@ -385,7 +385,7 @@ func TestDaemonSet_DrainStopsDaemons(t *testing.T) {
 	}
 
 	provider := NewFixedProvider(FixedProviderConfig{})
-	transport := NewTCPTransport("node-1")
+	transport := newTestTransport("node-1")
 	c, _ := NewCluster(ClusterConfig{
 		Self:     NodeMeta{ID: "node-1", Addr: "127.0.0.1:0"},
 		Provider: provider, Transport: transport,

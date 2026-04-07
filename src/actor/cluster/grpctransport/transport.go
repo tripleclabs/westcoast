@@ -196,6 +196,26 @@ func (t *GRPCTransport) Dial(ctx context.Context, addr string, auth cluster.Clus
 		remoteAddr:   addr,
 		headers:      t.cfg.DefaultHeaders,
 	}
+
+	// Start a read loop for incoming messages from the server on this
+	// bidirectional stream. This enables the server to send responses
+	// (e.g. singleton discover responses, CRDT deltas) back through
+	// the same stream the client opened.
+	t.mu.RLock()
+	handler := t.handler
+	t.mu.RUnlock()
+	if handler != nil {
+		go func() {
+			for {
+				pb, err := stream.Recv()
+				if err != nil {
+					return
+				}
+				handler.OnEnvelope(remoteNode, protoToEnvelope(pb))
+			}
+		}()
+	}
+
 	return conn, nil
 }
 

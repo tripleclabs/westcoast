@@ -15,7 +15,7 @@ func TestCluster_TwoNodeFormation(t *testing.T) {
 	provider1 := NewFixedProvider(FixedProviderConfig{
 		HeartbeatInterval: 100 * time.Millisecond,
 	})
-	transport1 := NewTCPTransport("node-1")
+	transport1 := newTestTransport("node-1")
 	cluster1, err := NewCluster(ClusterConfig{
 		Self:      NodeMeta{ID: "node-1", Addr: "127.0.0.1:0"},
 		Provider:  provider1,
@@ -33,13 +33,13 @@ func TestCluster_TwoNodeFormation(t *testing.T) {
 	defer cluster1.Stop()
 
 	// Get actual listen address.
-	addr1 := transport1.listener.Addr().String()
+	addr1 := testTransportAddr(transport1)
 
 	// Node 2.
 	provider2 := NewFixedProvider(FixedProviderConfig{
 		HeartbeatInterval: 100 * time.Millisecond,
 	})
-	transport2 := NewTCPTransport("node-2")
+	transport2 := newTestTransport("node-2")
 	cluster2, err := NewCluster(ClusterConfig{
 		Self:      NodeMeta{ID: "node-2", Addr: "127.0.0.1:0"},
 		Provider:  provider2,
@@ -59,7 +59,7 @@ func TestCluster_TwoNodeFormation(t *testing.T) {
 	}
 	defer cluster2.Stop()
 
-	addr2 := transport2.listener.Addr().String()
+	addr2 := testTransportAddr(transport2)
 
 	// Manually tell each provider about the other node.
 	provider1.AddMember(NodeMeta{ID: "node-2", Addr: addr2})
@@ -109,7 +109,7 @@ func TestCluster_MembershipEvents(t *testing.T) {
 	ctx := context.Background()
 
 	provider := NewFixedProvider(FixedProviderConfig{})
-	transport := NewTCPTransport("node-1")
+	transport := newTestTransport("node-1")
 
 	c, err := NewCluster(ClusterConfig{
 		Self:      NodeMeta{ID: "node-1", Addr: "127.0.0.1:0"},
@@ -145,7 +145,7 @@ func TestCluster_SendToUnknownNodeFails(t *testing.T) {
 	ctx := context.Background()
 
 	provider := NewFixedProvider(FixedProviderConfig{})
-	transport := NewTCPTransport("node-1")
+	transport := newTestTransport("node-1")
 
 	c, err := NewCluster(ClusterConfig{
 		Self:      NodeMeta{ID: "node-1", Addr: "127.0.0.1:0"},
@@ -170,7 +170,7 @@ func TestCluster_SendToUnknownNodeFails(t *testing.T) {
 
 func TestCluster_LocalNodeID(t *testing.T) {
 	provider := NewFixedProvider(FixedProviderConfig{})
-	transport := NewTCPTransport("my-node")
+	transport := newTestTransport("my-node")
 
 	c, err := NewCluster(ClusterConfig{
 		Self:      NodeMeta{ID: "my-node", Addr: "127.0.0.1:0"},
@@ -193,7 +193,7 @@ func TestCluster_MultipleEnvelopesDelivered(t *testing.T) {
 	var received []Envelope
 
 	provider1 := NewFixedProvider(FixedProviderConfig{})
-	transport1 := NewTCPTransport("node-1")
+	transport1 := newTestTransport("node-1")
 	c1, _ := NewCluster(ClusterConfig{
 		Self:      NodeMeta{ID: "node-1", Addr: "127.0.0.1:0"},
 		Provider:  provider1,
@@ -203,11 +203,11 @@ func TestCluster_MultipleEnvelopesDelivered(t *testing.T) {
 	})
 	c1.Start(ctx)
 	defer c1.Stop()
-	addr1 := transport1.listener.Addr().String()
+	addr1 := testTransportAddr(transport1)
 	_ = addr1
 
 	provider2 := NewFixedProvider(FixedProviderConfig{})
-	transport2 := NewTCPTransport("node-2")
+	transport2 := newTestTransport("node-2")
 	c2, _ := NewCluster(ClusterConfig{
 		Self:      NodeMeta{ID: "node-2", Addr: "127.0.0.1:0"},
 		Provider:  provider2,
@@ -222,7 +222,7 @@ func TestCluster_MultipleEnvelopesDelivered(t *testing.T) {
 	})
 	c2.Start(ctx)
 	defer c2.Stop()
-	addr2 := transport2.listener.Addr().String()
+	addr2 := testTransportAddr(transport2)
 
 	provider1.AddMember(NodeMeta{ID: "node-2", Addr: addr2})
 
@@ -265,7 +265,7 @@ func TestCluster_MultipleEnvelopesDelivered(t *testing.T) {
 }
 
 func TestNewCluster_ValidationErrors(t *testing.T) {
-	transport := NewTCPTransport("n")
+	transport := newTestTransport("n")
 	provider := NewFixedProvider(FixedProviderConfig{})
 
 	cases := []struct {

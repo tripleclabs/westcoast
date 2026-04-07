@@ -9,7 +9,7 @@ import (
 // CertAuth authenticates peers using TLS certificates. It verifies that
 // the peer's certificate was signed by the expected cluster CA.
 //
-// When used with a TLS-enabled TCPTransport, the TLS handshake handles
+// When used with a TLS-enabled gRPC transport, the TLS handshake handles
 // the actual certificate exchange. CertAuth provides the ClusterAuth
 // handshake credentials: the node sends its certificate's raw bytes as
 // credentials, and the peer verifies the certificate against the CA.

@@ -20,7 +20,7 @@ func TestSingleton_PlacementOnlyMatchingNodeLeads(t *testing.T) {
 	e1.SetMembers(members)
 
 	provider := NewFixedProvider(FixedProviderConfig{})
-	transport := NewTCPTransport("node-1")
+	transport := newTestTransport("node-1")
 	c1, _ := NewCluster(ClusterConfig{
 		Self:      members[0],
 		Provider:  provider,
@@ -65,7 +65,7 @@ func TestSingleton_PlacementSkipsNonMatchingLeader(t *testing.T) {
 	e2.SetMembers(members)
 
 	provider := NewFixedProvider(FixedProviderConfig{})
-	transport := NewTCPTransport("node-2")
+	transport := newTestTransport("node-2")
 	c2, _ := NewCluster(ClusterConfig{
 		Self:      members[1],
 		Provider:  provider,

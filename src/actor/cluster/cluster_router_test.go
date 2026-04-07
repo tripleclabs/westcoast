@@ -182,8 +182,8 @@ func TestClusterRouter_CrossNode(t *testing.T) {
 	codec := NewGobCodec()
 	codec.Register("")
 
-	transport1 := NewTCPTransport("node-1")
-	transport2 := NewTCPTransport("node-2")
+	transport1 := newTestTransport("node-1")
+	transport2 := newTestTransport("node-2")
 	provider1 := NewFixedProvider(FixedProviderConfig{})
 	provider2 := NewFixedProvider(FixedProviderConfig{})
 
@@ -226,7 +226,7 @@ func TestClusterRouter_CrossNode(t *testing.T) {
 	defer c1.Stop()
 	defer c2.Stop()
 
-	addr2 := transport2.listener.Addr().String()
+	addr2 := testTransportAddr(transport2)
 	provider1.AddMember(NodeMeta{ID: "node-2", Addr: addr2})
 
 	deadline := time.After(3 * time.Second)

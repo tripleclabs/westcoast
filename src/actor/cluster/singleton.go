@@ -93,6 +93,7 @@ type singletonDiscoverRequest struct{}
 // singletonDiscoverResponse lists the singletons running on the responding node.
 type singletonDiscoverResponse struct {
 	Running []string // singleton names
+	From    NodeID   // set by onDiscoverResponse, not sent on wire
 }
 
 // SingletonManager ensures that a set of singleton actors run on
@@ -333,13 +334,15 @@ func (sm *SingletonManager) DiscoverFromPeers(ctx context.Context) {
 		return
 	}
 
-	// Wait for at least one connected peer (not just membership).
-	// We need bidirectional connectivity for the response to come back.
-	waitCtx, waitCancel := context.WithTimeout(ctx, 10*time.Second)
+	members := sm.cluster.Members()
+	if len(members) == 0 {
+		return // no peers known, nothing to discover
+	}
+
+	// Wait briefly for at least one connected peer.
+	waitCtx, waitCancel := context.WithTimeout(ctx, 5*time.Second)
 	defer waitCancel()
-	var members []NodeMeta
 	for {
-		members = sm.cluster.Members()
 		for _, m := range members {
 			if sm.cluster.IsConnected(m.ID) {
 				goto connected
@@ -347,8 +350,12 @@ func (sm *SingletonManager) DiscoverFromPeers(ctx context.Context) {
 		}
 		select {
 		case <-waitCtx.Done():
-			return // no connected peers, proceed without discovery
+			return // couldn't connect to any peer
 		case <-time.After(50 * time.Millisecond):
+			members = sm.cluster.Members()
+			if len(members) == 0 {
+				return
+			}
 		}
 	}
 connected:
@@ -380,15 +387,12 @@ connected:
 			received++
 			sm.mu.Lock()
 			for _, name := range resp.Running {
-				// Mark these singletons as owned by someone else.
 				scope := "singleton/" + name
 				if sm.prevLeaders == nil {
 					sm.prevLeaders = make(map[string]NodeID)
 				}
-				// We don't know exactly which node, but we know it's not us.
-				// Store a sentinel — findPrevLeader will see it's non-empty.
 				if _, exists := sm.prevLeaders[scope]; !exists {
-					sm.prevLeaders[scope] = "__discovered"
+					sm.prevLeaders[scope] = resp.From
 				}
 			}
 			sm.mu.Unlock()
@@ -427,6 +431,7 @@ func (sm *SingletonManager) onDiscoverResponse(from NodeID, env Envelope) {
 	ch := sm.discoverCh
 	sm.mu.Unlock()
 
+	resp.From = NodeID(from)
 	if ch != nil {
 		select {
 		case ch <- resp:
@@ -549,8 +554,17 @@ func (sm *SingletonManager) gainLeadership(name string, s *singletonState, term 
 	}
 
 	// Rebalance mode: initiate handoff from the previous leader.
+	// If findPrevLeader didn't find one, compute who would have been
+	// the leader before us — they're the one running the singleton.
 	s.rebalancing = false
-	if !sm.clustered() {
+	if prevLeader == "" {
+		prevLeader = sm.election.leaderExcluding(scope, sm.election.localID)
+	}
+	if prevLeader == "" || !sm.clustered() {
+		// Can't determine who to handoff from, or no handoff protocol.
+		sm.startActor(name, s, s.spec.InitialState)
+		s.phase = phaseActive
+		s.term = term
 		return
 	}
 

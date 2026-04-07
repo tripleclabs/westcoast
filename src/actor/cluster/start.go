@@ -18,7 +18,7 @@ type Config struct {
 	// Provider discovers and monitors cluster peers.
 	Provider ClusterProvider
 
-	// Transport handles inter-node communication. Defaults to TCPTransport.
+	// Transport handles inter-node communication. Defaults to gRPC transport.
 	Transport Transport
 
 	// Auth authenticates cluster connections. Defaults to NoopAuth.
@@ -80,11 +80,10 @@ func Start(ctx context.Context, rt *actor.Runtime, cfg Config) (*Cluster, error)
 		cfg.Codec = NewGobCodec()
 	}
 	if cfg.Transport == nil {
-		if defaultTransportFactory != nil {
-			cfg.Transport = defaultTransportFactory(nodeID, nil)
-		} else {
-			cfg.Transport = NewTCPTransport(nodeID)
+		if defaultTransportFactory == nil {
+			return nil, fmt.Errorf("cluster: no transport configured and no default registered (import grpctransport)")
 		}
+		cfg.Transport = defaultTransportFactory(nodeID, nil)
 	}
 	if cfg.Auth == nil {
 		cfg.Auth = NoopAuth{}

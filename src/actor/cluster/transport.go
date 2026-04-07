@@ -59,7 +59,7 @@ var defaultTransportFactory TransportFactory
 // when no Transport is provided in the config. Import a transport package
 // to set this automatically:
 //
-//	import _ "github.com/tripleclabs/westcoast/src/actor/cluster/grpctransport"
+//	import _ 
 func SetDefaultTransportFactory(f TransportFactory) {
 	defaultTransportFactory = f
 }

@@ -380,13 +380,17 @@ func (c *Cluster) OnEnvelope(from NodeID, env Envelope) {
 	}
 }
 
-// OnConnectionEstablished implements InboundHandler. Inbound connections are not stored
-// since the transport delivers envelopes directly via OnEnvelope.
+// OnConnectionEstablished implements InboundHandler. Stores the inbound
+// connection so SendRemote can use it for replies (e.g. singleton discover
+// responses) before the cluster has dialed the peer outbound.
 func (c *Cluster) OnConnectionEstablished(remote NodeID, conn Connection) {
-	// Inbound connections are used for receiving only.
-	// Outbound connections (from dialPeer) are used for sending.
-	// We don't store inbound connections — the transport's stream handler
-	// delivers envelopes directly via OnEnvelope.
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	// Only store if we don't already have an outbound connection.
+	// Outbound connections from dialPeer take precedence.
+	if _, exists := c.conns[remote]; !exists {
+		c.conns[remote] = conn
+	}
 }
 
 // OnConnectionLost implements InboundHandler. Connection loss is handled lazily
