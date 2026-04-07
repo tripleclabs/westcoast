@@ -270,15 +270,11 @@ cr.SendWith(ctx, "api", payload,
 ### Singleton Actors
 
 ```go
-// Basic — no handoff protocol (single-node or non-critical):
-sm := cluster.NewSingletonManager(rt, election, registry)
+// Single-node (no cluster):
+sm := cluster.NewSingletonManager(rt, election, registry, nil, nil, nil)
 
-// With handoff protocol — at-most-one guarantee during transitions:
-sm := cluster.NewSingletonManager(rt, election, registry,
-    cluster.WithCluster(c),
-    cluster.WithCodec(codec),
-    cluster.WithDispatcher(dispatcher),
-)
+// Clustered — handoff protocol ensures at-most-one during transitions:
+sm := cluster.NewSingletonManager(rt, election, registry, c, codec, dispatcher)
 
 // Wire membership events so the manager can skip handoff for crashed nodes:
 c.SetOnMemberEvent(func(event cluster.MemberEvent) {
@@ -752,16 +748,16 @@ type SingletonSpec struct {
     Options      []actor.ActorOption
     Placement    NodeMatcher         // nil = any node eligible
 
-    // Handoff protocol (optional — requires WithCluster/WithCodec/WithDispatcher):
+    // Handoff protocol (active when cluster/codec/dispatcher are provided):
     HandoffTimeout time.Duration                                    // default 10s
     CaptureState   func(ctx context.Context, actorID string) (any, error) // extract state on old leader
     OnHandoff      func(handoffState any) any                       // transform state on new leader
 }
 
-type SingletonManagerOption func(*SingletonManager)
-func WithCluster(c *Cluster) SingletonManagerOption
-func WithCodec(c Codec) SingletonManagerOption
-func WithDispatcher(d *InboundDispatcher) SingletonManagerOption
+func NewSingletonManager(
+    rt *actor.Runtime, election *RingElection, registry *DistributedRegistry,
+    cluster *Cluster, codec Codec, dispatcher *InboundDispatcher,
+) *SingletonManager
 ```
 
 ### DaemonSpec

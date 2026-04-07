@@ -212,6 +212,22 @@ func (p *FixedProvider) DroppedEvents() uint64 {
 	return p.droppedEvents
 }
 
+// AddSeed adds a node to the probe list without immediately marking it as
+// alive. The node will be discovered on the next heartbeat cycle when the
+// probe succeeds. This is safer than AddMember when the target node may
+// not be ready to accept connections yet.
+func (p *FixedProvider) AddSeed(meta NodeMeta) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	// Add to seeds so the heartbeat loop probes it.
+	for _, s := range p.cfg.Seeds {
+		if s.ID == meta.ID {
+			return // already in seeds
+		}
+	}
+	p.cfg.Seeds = append(p.cfg.Seeds, meta)
+}
+
 // AddMember manually registers a node. Useful for testing.
 func (p *FixedProvider) AddMember(meta NodeMeta) {
 	p.mu.Lock()

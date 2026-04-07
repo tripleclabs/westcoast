@@ -42,7 +42,8 @@ func nodeIDToReplicaID(id NodeID) crdt.ReplicaID {
 // with add-wins semantics. Replication and anti-entropy are handled entirely
 // by the CRDT library — just wire up a Transport and TopologyProvider.
 type DistributedRegistry struct {
-	data *crdt.ORMap[actor.PID]
+	data      *crdt.ORMap[actor.PID]
+	transport *ClusterCRDTTransport // nil if no cluster replication
 }
 
 // RegistryOption configures a DistributedRegistry.
@@ -81,17 +82,20 @@ func NewDistributedRegistry(nodeID NodeID, opts ...RegistryOption) *DistributedR
 
 	replicaID := nodeIDToReplicaID(nodeID)
 
+	var crdtTransport *ClusterCRDTTransport
 	var crdtOpts []crdt.Option
 	if o.cluster != nil {
+		crdtTransport = NewClusterCRDTTransport(o.cluster)
 		crdtOpts = append(crdtOpts,
-			crdt.WithTransport(NewClusterCRDTTransport(o.cluster)),
+			crdt.WithTransport(crdtTransport),
 			crdt.WithTopology(NewClusterTopology(o.cluster)),
 		)
 	}
 	crdtOpts = append(crdtOpts, o.crdtOpts...)
 
 	return &DistributedRegistry{
-		data: crdt.NewORMap[actor.PID](replicaID, pidCodec{}, crdtOpts...),
+		data:      crdt.NewORMap[actor.PID](replicaID, pidCodec{}, crdtOpts...),
+		transport: crdtTransport,
 	}
 }
 
@@ -106,6 +110,15 @@ func NewDistributedRegistryWithTransport(nodeID NodeID, transport crdt.Transport
 	}, opts...)
 	return &DistributedRegistry{
 		data: crdt.NewORMap[actor.PID](replicaID, pidCodec{}, allOpts...),
+	}
+}
+
+// WireInbound registers the CRDT transport's inbound handler with the
+// dispatcher so incoming replication messages from peers are delivered.
+// Must be called after NewDistributedRegistry with WithClusterReplication.
+func (r *DistributedRegistry) WireInbound(d *InboundDispatcher) {
+	if r.transport != nil {
+		r.transport.RegisterHandler(d)
 	}
 }
 

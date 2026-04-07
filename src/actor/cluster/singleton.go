@@ -117,48 +117,28 @@ type SingletonManager struct {
 	prevLeaders map[string]NodeID
 }
 
-// SingletonManagerOption configures optional SingletonManager behavior.
-type SingletonManagerOption func(*SingletonManager)
-
-// WithCluster enables placement-aware leader election and cross-node
-// handoff coordination.
-func WithCluster(c *Cluster) SingletonManagerOption {
-	return func(sm *SingletonManager) { sm.cluster = c }
-}
-
-// WithCodec sets the codec for encoding handoff messages.
-func WithCodec(c Codec) SingletonManagerOption {
-	return func(sm *SingletonManager) { sm.codec = c }
-}
-
-// WithDispatcher registers the singleton handoff protocol handlers
-// with the inbound dispatcher for cross-node communication.
-func WithDispatcher(d *InboundDispatcher) SingletonManagerOption {
-	return func(sm *SingletonManager) { sm.dispatcher = d }
-}
-
-// NewSingletonManager creates a SingletonManager. Provide WithCluster,
-// WithCodec, and WithDispatcher options to enable the handoff protocol.
-// Without these, the manager falls back to immediate start/stop (suitable
-// for single-node or when at-most-one is not critical).
-func NewSingletonManager(runtime *actor.Runtime, election *RingElection, registry *DistributedRegistry, opts ...SingletonManagerOption) *SingletonManager {
-	sm := &SingletonManager{
+// NewSingletonManager creates a SingletonManager.
+//
+// For clustered operation, pass the cluster, codec, and dispatcher — these
+// enable the handoff protocol that guarantees at-most-one semantics during
+// leadership transitions. For single-node operation (or tests), pass nil
+// for all three.
+func NewSingletonManager(runtime *actor.Runtime, election *RingElection, registry *DistributedRegistry, cluster *Cluster, codec Codec, dispatcher *InboundDispatcher) *SingletonManager {
+	return &SingletonManager{
 		runtime:      runtime,
 		election:     election,
 		registry:     registry,
+		cluster:      cluster,
+		codec:        codec,
+		dispatcher:   dispatcher,
 		singletons:   make(map[string]*singletonState),
 		failedNodes:  make(map[NodeID]time.Time),
 		handoffWaits: make(map[string]chan singletonHandoffResponse),
 	}
-	for _, opt := range opts {
-		opt(sm)
-	}
-	return sm
 }
 
-// handoffEnabled returns true if the manager has the dependencies needed
-// for the cross-node handoff protocol.
-func (sm *SingletonManager) handoffEnabled() bool {
+// clustered returns true if the manager is wired for multi-node operation.
+func (sm *SingletonManager) clustered() bool {
 	return sm.cluster != nil && sm.codec != nil && sm.dispatcher != nil
 }
 
@@ -176,7 +156,7 @@ func (sm *SingletonManager) Start(ctx context.Context) {
 	ctx, sm.cancel = context.WithCancel(ctx)
 
 	// Register system envelope handlers for handoff protocol.
-	if sm.handoffEnabled() {
+	if sm.clustered() {
 		sm.registerHandoffTypes()
 		sm.dispatcher.RegisterHandler(singletonHandoffReqType, sm.onHandoffRequest)
 		sm.dispatcher.RegisterHandler(singletonHandoffRespType, sm.onHandoffResponse)
@@ -195,7 +175,11 @@ func (sm *SingletonManager) Start(ctx context.Context) {
 		go sm.watchLoop(ctx, name, ch)
 	}
 
-	// Reconcile immediately in case we're already the leader.
+	// Reconcile immediately. In single-node mode this starts everything.
+	// In clustered mode, findPrevLeader checks cluster.Members() — if no
+	// peers are known yet (we're the first node), singletons start
+	// immediately. When peers join later, OnMemberEvent triggers re-reconcile
+	// and the handoff protocol ensures safe transitions.
 	sm.reconcile()
 }
 
@@ -241,7 +225,8 @@ func (sm *SingletonManager) Running() []string {
 
 // OnMemberEvent should be called when a cluster membership event occurs.
 // It tracks failed nodes so the handoff protocol can skip unreachable
-// nodes and start singletons immediately.
+// nodes and start singletons immediately. On the first call, it marks
+// the manager as ready and triggers initial reconciliation.
 func (sm *SingletonManager) OnMemberEvent(event MemberEvent) {
 	if event.Type == MemberFailed {
 		sm.failedMu.Lock()
@@ -256,6 +241,9 @@ func (sm *SingletonManager) OnMemberEvent(event MemberEvent) {
 		}
 	}
 	sm.failedMu.Unlock()
+
+	// Trigger reconcile — membership changed, so leadership may have too.
+	sm.reconcile()
 }
 
 func (sm *SingletonManager) isRecentlyFailed(id NodeID) bool {
@@ -364,40 +352,43 @@ func (sm *SingletonManager) gainLeadership(name string, s *singletonState, term 
 	scope := "singleton/" + name
 
 	// Determine the previous leader.
-	// We look at the election event — PrevLeader tells us who had it before.
 	prevLeader := sm.findPrevLeader(scope)
 
-	// Cases where we can start immediately (no handoff needed):
-	// 1. No previous leader (first election or cluster-of-one)
-	// 2. Previous leader is us (shouldn't happen, but safe)
-	// 3. Previous leader recently failed (node crashed)
-	// 4. Handoff not enabled (no codec/dispatcher/cluster)
-	canSkipHandoff := prevLeader == "" ||
+	// Start immediately when there's clearly no prior instance:
+	// - No previous leader (first election or cluster-of-one)
+	// - Previous leader is us (leadership bounce on same node)
+	// - Previous leader recently failed (node crashed, no instance to worry about)
+	if prevLeader == "" ||
 		prevLeader == NodeID(sm.runtime.NodeID()) ||
-		sm.isRecentlyFailed(prevLeader) ||
-		!sm.handoffEnabled()
-
-	if canSkipHandoff {
+		sm.isRecentlyFailed(prevLeader) {
 		sm.startActor(name, s, s.spec.InitialState)
 		s.phase = phaseActive
 		s.term = term
 		return
 	}
 
-	// Handoff required — send request to old leader.
+	// A previous leader exists and is alive. We must confirm it has
+	// stopped the singleton before we start it. This requires the
+	// handoff protocol (WithCluster + WithCodec + WithDispatcher).
+	if !sm.clustered() {
+		// Cannot safely start — the old leader may still be running
+		// the singleton and we have no way to tell it to stop.
+		// Stay idle until the old leader fails or we get handoff deps.
+		return
+	}
+
 	s.phase = phaseActivating
 	s.term = term
 
 	ctx, cancel := context.WithTimeout(context.Background(), s.spec.handoffTimeout())
 	s.cancel = cancel
-
 	go sm.runHandoff(ctx, name, prevLeader, term)
 }
 
 // loseLeadership handles the transition away from leadership.
 // Must be called with sm.mu held.
 func (sm *SingletonManager) loseLeadership(name string, s *singletonState, term uint64) {
-	if !sm.handoffEnabled() {
+	if !sm.clustered() {
 		// No handoff protocol — stop immediately (legacy behavior).
 		sm.stopAndCleanup(name, s)
 		return
@@ -662,10 +653,39 @@ func (sm *SingletonManager) stopAndCleanup(name string, s *singletonState) {
 	}
 }
 
-// findPrevLeader returns the previous leader for a scope. This is
-// populated by the watchLoop from LeaderEvent.PrevLeader.
+// findPrevLeader returns the previous leader for a scope. It first
+// checks the prevLeaders map (populated by watchLoop from LeaderEvent).
+// If no entry exists (e.g. this node just joined the cluster), it
+// computes who would be leader if we weren't in the election — that's
+// the node most likely already running the singleton. It also checks
+// the cluster's peer list, since the cluster may know about peers
+// before the election has been updated with membership events.
 func (sm *SingletonManager) findPrevLeader(scope string) NodeID {
-	return sm.getPrevLeader(scope)
+	if prev := sm.getPrevLeader(scope); prev != "" {
+		return prev
+	}
+	// Check election members — only when clustered, since without handoff
+	// we can't coordinate with the previous leader anyway.
+	if sm.clustered() {
+		if prev := sm.election.leaderExcluding(scope, sm.election.localID); prev != "" {
+			return prev
+		}
+	}
+	// Fall back to cluster peers. The cluster may know about nodes that
+	// the election hasn't been told about yet (e.g. during initial join).
+	// Only relevant when clustered — without handoff we can't coordinate.
+	if sm.clustered() {
+		members := sm.cluster.Members()
+		if len(members) > 0 {
+			// Compute who would be leader among the known peers.
+			peerSet := make(map[NodeID]bool, len(members))
+			for _, m := range members {
+				peerSet[m.ID] = true
+			}
+			return computeLeader(scope, peerSet)
+		}
+	}
+	return ""
 }
 
 func (sm *SingletonManager) setPrevLeader(scope string, prev NodeID) {

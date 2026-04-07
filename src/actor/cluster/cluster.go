@@ -3,6 +3,7 @@ package cluster
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 )
@@ -442,6 +443,7 @@ func (c *Cluster) dialPeer(meta NodeMeta) {
 	delete(c.dialing, meta.ID)
 
 	if err != nil {
+		slog.Warn("cluster: dial peer failed", "peer", meta.ID, "addr", meta.Addr, "error", err)
 		return
 	}
 

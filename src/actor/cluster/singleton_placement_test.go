@@ -37,7 +37,7 @@ func TestSingleton_PlacementOnlyMatchingNodeLeads(t *testing.T) {
 	rt1 := actor.NewRuntime(actor.WithNodeID("node-1"))
 	nop := func(_ context.Context, s any, m actor.Message) (any, error) { return s, nil }
 
-	sm := NewSingletonManager(rt1, e1, nil, WithCluster(c1))
+	sm := NewSingletonManager(rt1, e1, nil, c1, nil, nil)
 	sm.Register(SingletonSpec{
 		Name:      "gpu-coordinator",
 		Handler:   nop,
@@ -80,7 +80,7 @@ func TestSingleton_PlacementSkipsNonMatchingLeader(t *testing.T) {
 	rt2 := actor.NewRuntime(actor.WithNodeID("node-2"))
 	nop := func(_ context.Context, s any, m actor.Message) (any, error) { return s, nil }
 
-	sm := NewSingletonManager(rt2, e2, nil, WithCluster(c2))
+	sm := NewSingletonManager(rt2, e2, nil, c2, nil, nil)
 	sm.Register(SingletonSpec{
 		Name:      "gpu-coordinator",
 		Handler:   nop,
@@ -104,7 +104,7 @@ func TestSingleton_PlacementNilIsUnrestricted(t *testing.T) {
 	rt := actor.NewRuntime(actor.WithNodeID("node-1"))
 	nop := func(_ context.Context, s any, m actor.Message) (any, error) { return s, nil }
 
-	sm := NewSingletonManager(rt, e, nil)
+	sm := NewSingletonManager(rt, e, nil, nil, nil, nil)
 	sm.Register(SingletonSpec{
 		Name:    "unrestricted",
 		Handler: nop,

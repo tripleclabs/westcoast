@@ -141,6 +141,20 @@ func (e *RingElection) memberCount() int {
 	return len(e.members)
 }
 
+// leaderExcluding computes who would be leader for a scope if the given
+// node were removed from the election. Returns "" if no other members exist.
+func (e *RingElection) leaderExcluding(scope string, exclude NodeID) NodeID {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	others := make(map[NodeID]bool, len(e.members)-1)
+	for id := range e.members {
+		if id != exclude {
+			others[id] = true
+		}
+	}
+	return computeLeader(scope, others)
+}
+
 func (e *RingElection) ensureScopeLocked(scope string) *electionScope {
 	s, ok := e.scopes[scope]
 	if !ok {

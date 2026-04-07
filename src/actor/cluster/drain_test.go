@@ -61,7 +61,7 @@ func TestDrain_StopsSingletons(t *testing.T) {
 		return state, nil
 	}
 
-	sm := NewSingletonManager(rt, election, nil)
+	sm := NewSingletonManager(rt, election, nil, nil, nil, nil)
 	sm.Register(SingletonSpec{Name: "drain-singleton", Handler: handler})
 	sm.Start(ctx)
 

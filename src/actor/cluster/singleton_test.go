@@ -3,6 +3,7 @@ package cluster
 import (
 	"context"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -26,7 +27,7 @@ func TestSingleton_StartsOnLeader(t *testing.T) {
 		return state, nil
 	}
 
-	sm := NewSingletonManager(rt, election, nil)
+	sm := NewSingletonManager(rt, election, nil, nil, nil, nil)
 	sm.Register(SingletonSpec{
 		Name:    "my-singleton",
 		Handler: handler,
@@ -60,7 +61,7 @@ func TestSingleton_StopsOnLeadershipLoss(t *testing.T) {
 		return state, nil
 	}
 
-	sm := NewSingletonManager(rt, election, nil)
+	sm := NewSingletonManager(rt, election, nil, nil, nil, nil)
 	sm.Register(SingletonSpec{
 		Name:    "leader-singleton",
 		Handler: handler,
@@ -135,7 +136,7 @@ func TestSingleton_MultipleSingletons(t *testing.T) {
 		return state, nil
 	}
 
-	sm := NewSingletonManager(rt, election, nil)
+	sm := NewSingletonManager(rt, election, nil, nil, nil, nil)
 	sm.Register(SingletonSpec{Name: "singleton-a", Handler: handler})
 	sm.Register(SingletonSpec{Name: "singleton-b", Handler: handler})
 	sm.Register(SingletonSpec{Name: "singleton-c", Handler: handler})
@@ -162,7 +163,7 @@ func TestSingleton_StopCleansUp(t *testing.T) {
 		return state, nil
 	}
 
-	sm := NewSingletonManager(rt, election, nil)
+	sm := NewSingletonManager(rt, election, nil, nil, nil, nil)
 	sm.Register(SingletonSpec{Name: "cleanup-test", Handler: handler})
 	sm.Start(context.Background())
 
@@ -194,7 +195,7 @@ func TestSingleton_ClusterOfOne(t *testing.T) {
 		return state, nil
 	}
 
-	sm := NewSingletonManager(rt, election, nil)
+	sm := NewSingletonManager(rt, election, nil, nil, nil, nil)
 	sm.Register(SingletonSpec{
 		Name:    "solo-singleton",
 		Handler: handler,
@@ -221,7 +222,7 @@ func TestSingleton_MemberFailed_SkipsHandoff(t *testing.T) {
 		return state, nil
 	}
 
-	sm := NewSingletonManager(rt, election, nil)
+	sm := NewSingletonManager(rt, election, nil, nil, nil, nil)
 	sm.Register(SingletonSpec{
 		Name:    "failover-test",
 		Handler: handler,
@@ -313,7 +314,7 @@ func TestSingleton_LeadershipBounce_RestartsSameNode(t *testing.T) {
 		return state, nil
 	}
 
-	sm := NewSingletonManager(rt, election, nil)
+	sm := NewSingletonManager(rt, election, nil, nil, nil, nil)
 	sm.Register(SingletonSpec{
 		Name:    "bounce-test",
 		Handler: handler,
@@ -374,7 +375,7 @@ func TestSingleton_TwoNodes_NoFlapping(t *testing.T) {
 		return state, nil
 	}
 
-	sm1 := NewSingletonManager(rt1, e1, nil)
+	sm1 := NewSingletonManager(rt1, e1, nil, nil, nil, nil)
 	sm1.Register(SingletonSpec{
 		Name:         "stable-singleton",
 		Handler:      handler1,
@@ -414,7 +415,7 @@ func TestSingleton_TwoNodes_NoFlapping(t *testing.T) {
 		return state, nil
 	}
 
-	sm2 := NewSingletonManager(rt2, e2, nil)
+	sm2 := NewSingletonManager(rt2, e2, nil, nil, nil, nil)
 	sm2.Register(SingletonSpec{
 		Name:    "stable-singleton",
 		Handler: handler2,
@@ -493,4 +494,196 @@ func TestSingleton_TwoNodes_NoFlapping(t *testing.T) {
 			t.Errorf("flapping on node-1: starts=%d (expected 1)", starts1.Load())
 		}
 	}
+}
+
+func TestSingleton_TwoNodes_JoiningNodeDoesNotDuplicate(t *testing.T) {
+	// Regression test: node-1 runs many singletons. node-2 joins and becomes
+	// leader for SOME of them (hash distribution). At NO POINT during the
+	// entire transition should two instances of the same singleton exist.
+	//
+	// We prove this with a shared liveness tracker: start hooks increment a
+	// per-singleton counter, stop hooks decrement it. If any counter ever
+	// exceeds 1, the test fails immediately — not after convergence.
+	ctx := context.Background()
+	const numSingletons = 20
+
+	// --- Shared liveness tracker across both nodes ---
+	var mu sync.Mutex
+	alive := make(map[string]int)        // singleton name → current instance count
+	var duplicateViolation atomic.Value   // stores first violation as string
+
+	trackStart := func(name string) {
+		mu.Lock()
+		defer mu.Unlock()
+		alive[name]++
+		if alive[name] > 1 {
+			msg := fmt.Sprintf("DUPLICATE at start: %q has %d instances", name, alive[name])
+			duplicateViolation.CompareAndSwap(nil, msg)
+		}
+	}
+	trackStop := func(name string) {
+		mu.Lock()
+		defer mu.Unlock()
+		alive[name]--
+	}
+
+	makeHandler := func() actor.Handler {
+		return func(_ context.Context, state any, msg actor.Message) (any, error) {
+			return state, nil
+		}
+	}
+
+	codec := NewGobCodec()
+
+	// --- Node 1 setup ---
+	provider1 := NewFixedProvider(FixedProviderConfig{HeartbeatInterval: 100 * time.Millisecond})
+	transport1 := NewTCPTransport("node-1")
+	c1, _ := NewCluster(ClusterConfig{
+		Self:      NodeMeta{ID: "node-1", Addr: "127.0.0.1:0"},
+		Provider:  provider1,
+		Transport: transport1,
+		Auth:      NoopAuth{},
+		Codec:     codec,
+	})
+	c1.Start(ctx)
+	defer c1.Stop()
+	addr1 := transport1.listener.Addr().String()
+
+	e1 := NewRingElection("node-1")
+	rt1 := actor.NewRuntime(actor.WithNodeID("node-1"))
+	d1 := NewInboundDispatcher(rt1, codec)
+	d1.SetCluster(c1)
+	c1.SetOnEnvelope(func(from NodeID, env Envelope) { d1.Dispatch(ctx, from, env) })
+
+	sm1 := NewSingletonManager(rt1, e1, nil, c1, codec, d1)
+	c1.SetOnMemberEvent(func(ev MemberEvent) {
+		sm1.OnMemberEvent(ev)
+		e1.OnMembershipChange(ev)
+	})
+
+	for i := range numSingletons {
+		name := fmt.Sprintf("svc-%d", i)
+		sm1.Register(SingletonSpec{
+			Name:    name,
+			Handler: makeHandler(),
+			Options: []actor.ActorOption{
+				actor.WithStartHook(func(_ context.Context, id string) error {
+					trackStart(id)
+					return nil
+				}),
+				actor.WithStopHook(func(_ context.Context, id string) error {
+					trackStop(id)
+					return nil
+				}),
+			},
+		})
+	}
+	sm1.Start(ctx)
+	defer sm1.Stop()
+
+	time.Sleep(100 * time.Millisecond)
+
+	if len(sm1.Running()) != numSingletons {
+		t.Fatalf("expected %d singletons on node-1, got %d", numSingletons, len(sm1.Running()))
+	}
+
+	// Figure out which singletons will move to node-2.
+	preview := NewRingElection("node-1")
+	preview.SetMembers([]NodeMeta{{ID: "node-1"}, {ID: "node-2"}})
+	var willMove []string
+	for i := range numSingletons {
+		name := fmt.Sprintf("svc-%d", i)
+		if l, _ := preview.Leader("singleton/" + name); l == "node-2" {
+			willMove = append(willMove, name)
+		}
+	}
+	if len(willMove) == 0 {
+		t.Skip("no singletons hash to node-2")
+	}
+	t.Logf("%d of %d singletons will move to node-2: %v", len(willMove), numSingletons, willMove)
+
+	// --- Node 2 setup ---
+	provider2 := NewFixedProvider(FixedProviderConfig{HeartbeatInterval: 100 * time.Millisecond})
+	transport2 := NewTCPTransport("node-2")
+	c2, _ := NewCluster(ClusterConfig{
+		Self:      NodeMeta{ID: "node-2", Addr: "127.0.0.1:0"},
+		Provider:  provider2,
+		Transport: transport2,
+		Auth:      NoopAuth{},
+		Codec:     codec,
+	})
+	c2.Start(ctx)
+	defer c2.Stop()
+	addr2 := transport2.listener.Addr().String()
+
+	e2 := NewRingElection("node-2")
+	rt2 := actor.NewRuntime(actor.WithNodeID("node-2"))
+	d2 := NewInboundDispatcher(rt2, codec)
+	d2.SetCluster(c2)
+	c2.SetOnEnvelope(func(from NodeID, env Envelope) { d2.Dispatch(ctx, from, env) })
+
+	// Connect the clusters BEFORE starting the singleton manager on node-2.
+	provider1.AddMember(NodeMeta{ID: "node-2", Addr: addr2})
+	provider2.AddMember(NodeMeta{ID: "node-1", Addr: addr1})
+
+	deadline := time.After(15 * time.Second)
+	for !c1.IsConnected("node-2") || !c2.IsConnected("node-1") {
+		select {
+		case <-deadline:
+			t.Fatal("timeout waiting for cluster connection")
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+
+	// Start node-2's singleton manager. It knows about node-1 already.
+	sm2 := NewSingletonManager(rt2, e2, nil, c2, codec, d2)
+	c2.SetOnMemberEvent(func(ev MemberEvent) {
+		sm2.OnMemberEvent(ev)
+		e2.OnMembershipChange(ev)
+	})
+	e2.OnMembershipChange(MemberEvent{
+		Type:   MemberJoin,
+		Member: NodeMeta{ID: "node-1"},
+	})
+
+	for i := range numSingletons {
+		name := fmt.Sprintf("svc-%d", i)
+		sm2.Register(SingletonSpec{
+			Name:    name,
+			Handler: makeHandler(),
+			Options: []actor.ActorOption{
+				actor.WithStartHook(func(_ context.Context, id string) error {
+					trackStart(id)
+					return nil
+				}),
+				actor.WithStopHook(func(_ context.Context, id string) error {
+					trackStop(id)
+					return nil
+				}),
+			},
+		})
+	}
+	sm2.Start(ctx)
+	defer sm2.Stop()
+
+	// Wait for handoff protocol to settle.
+	time.Sleep(3 * time.Second)
+
+	// THE CRITICAL ASSERT: check that no duplicate was ever observed,
+	// not just that we converged to one.
+	if v := duplicateViolation.Load(); v != nil {
+		t.Fatalf("at-most-one violated during handoff: %s", v.(string))
+	}
+
+	// Also verify final convergence.
+	running1 := sm1.Running()
+	running2 := sm2.Running()
+
+	total := len(running1) + len(running2)
+	if total != numSingletons {
+		t.Errorf("expected %d total singletons, got %d (node-1=%d, node-2=%d)",
+			numSingletons, total, len(running1), len(running2))
+	}
+
+	t.Logf("final: node-1=%d node-2=%d", len(running1), len(running2))
 }

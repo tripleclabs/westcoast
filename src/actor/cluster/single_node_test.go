@@ -51,7 +51,7 @@ func TestSingleNode_SingletonWorks(t *testing.T) {
 		return state, nil
 	}
 
-	sm := NewSingletonManager(rt, election, nil)
+	sm := NewSingletonManager(rt, election, nil, nil, nil, nil)
 	sm.Register(SingletonSpec{Name: "my-singleton", Handler: handler})
 	sm.Start(context.Background())
 	defer sm.Stop()
