@@ -233,11 +233,13 @@ func (dm *DaemonSetManager) reconcileDaemon(name string) {
 			_, err := dm.runtime.CreateActor(d.spec.Name, d.spec.InitialState, d.spec.Handler, d.spec.Options...)
 			if err == nil {
 				d.running = true
+				dm.runtime.RegisterName(d.spec.Name, d.spec.Name, dm.runtime.NodeID())
 			}
 		}
 	}
 
 	if !shouldRun && d.running {
+		dm.runtime.UnregisterName(name)
 		dm.runtime.Stop(name)
 		if d.closer != nil {
 			d.closer()
@@ -291,6 +293,7 @@ func (dm *DaemonSetManager) startReplicatedDaemon(d *daemonState) {
 	if err == nil {
 		d.running = true
 		d.closer = closer
+		dm.runtime.RegisterName(d.spec.Name, d.spec.Name, dm.runtime.NodeID())
 	} else if closer != nil {
 		closer()
 	}

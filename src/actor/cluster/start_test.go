@@ -48,6 +48,12 @@ func TestStart_SingleNode(t *testing.T) {
 		t.Errorf("expected daemon running, got %v", daemons)
 	}
 
+	// SendName to daemon should work (local name resolution).
+	ack := rt.SendName(ctx, "my-daemon", "hello")
+	if ack.Outcome != actor.PIDDelivered {
+		t.Errorf("SendName to daemon: expected delivered, got %s", ack.Outcome)
+	}
+
 	// Registry should work.
 	pid, _ := rt.IssuePID("solo", "my-singleton")
 	if err := c.Register("test-name", pid); err != nil {
