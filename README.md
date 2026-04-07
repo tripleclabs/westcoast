@@ -317,18 +317,20 @@ c.RegisterDaemon(cluster.DaemonSpec{
 })
 
 // Replicated daemon — shared CRDT state across all instances:
-c.RegisterReplicated("session-store",
-    func(ctx context.Context, sessions *crdt.ORMap[any], msg actor.Message) error {
+cluster.RegisterReplicated(c, "session-store", sessionCodec{},
+    func(ctx context.Context, sessions *crdt.ORMap[Session], msg actor.Message) error {
         switch m := msg.Payload.(type) {
         case CreateSession:
             sessions.Put(ctx, m.ID, m.Session)
         case GetSession:
             s, _ := sessions.Get(m.ID)
-            // type-assert: session := s.(Session)
+            // use s directly — fully typed
         }
         return nil
     },
 )
+// For simple value types, use built-in codecs: crdt.StringCodec{},
+// crdt.Int64Codec{}, crdt.BytesCodec{}.
 
 // Daemons run on every node automatically.
 // Replicated daemons converge state across all instances via CRDT.
@@ -774,7 +776,7 @@ func (dm *DaemonSetManager) Broadcast(ctx context.Context, name string, payload 
 
 // Replicated daemons — shared CRDT state across all instances:
 type ReplicatedHandler[V any] func(ctx context.Context, state *crdt.ORMap[V], msg actor.Message) error
-func (c *Cluster) RegisterReplicated(name string, handler ReplicatedHandler[any], opts ...RegisterReplicatedOption)
+func RegisterReplicated[V any](c *Cluster, name string, codec crdt.Codec[V], handler ReplicatedHandler[V], opts ...RegisterReplicatedOption)
 ```
 
 ### DrainConfig
