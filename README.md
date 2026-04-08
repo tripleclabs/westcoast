@@ -2,7 +2,7 @@
 
 Go actor runtime inspired by Erlang/OTP. Single-node execution with built-in distribution support for multi-node clusters.
 
-Zero external dependencies. Single Go module.
+Single Go module. One external dependency: `robfig/cron/v3` (MIT, zero transitive deps) for cron expression parsing.
 
 ## What It Provides
 
@@ -20,6 +20,7 @@ Zero external dependencies. Single Go module.
 - **Lifecycle hooks**: `Start` and `Stop` hooks with configurable timeouts. Panic-safe (defer/recover).
 - **PubSub broker**: built-in broker actor with MQTT-style wildcard routing (`+` single-segment, `#` tail wildcard). Ask-based subscribe/unsubscribe. Async publish fan-out.
 - **Timers**: `SendAfter(pid, payload, delay)` and `SendInterval(pid, payload, interval)`. Returns `TimerRef` for cancellation. Works with both local and remote PIDs.
+- **Cron timers**: `CronSubscribe(ctx, cronID, pid, schedule, payload, tag, timeout)` registers cron-scheduled callbacks using standard cron expressions (5-field, optional seconds, `@every` shorthand). Message-based protocol — actors send `CronSubscribeCommand` via Ask, receive `CronTickMessage` on each fire. Subscriptions survive actor restarts (keyed by actor ID). Monitor-based cleanup on terminal stop. Lazy auto-start on first use.
 - **Actor monitors**: `Monitor(watcher, target)` — watcher receives a `DownMessage` when the target stops (for any reason: explicit stop, supervision decision, crash). `Demonitor` to cancel. Works cross-node.
 - **Dead letters**: undeliverable messages routed to a configurable `DeadLetterHandler`. Every PID rejection (not found, stopped, stale generation) emits a `DeadLetter` with the original payload, target, and reason. Counter available via `DeadLetterCount()`.
 - **Observability**: event emitter interface, outcome journal (processing, lifecycle, ask, routing, batch, broker outcomes), pluggable metrics hooks.
@@ -40,6 +41,8 @@ Zero external dependencies. Single Go module.
 - **Cluster router**: `ClusterRouter` provides distributed service groups with metadata-aware routing. Workers on any node join a named service. Supports static filtering (`WithWorkerFilter`), static preference (`WithWorkerPreference`), and call-time locality-aware routing (`SendWith` + `Nearest`). Strategies: round-robin, random, consistent-hash. Worker lists replicate via CRDT gossip. No coordinator node.
 - **Singleton actors**: `SingletonManager` guarantees exactly one instance of an actor runs cluster-wide. Each singleton gets its own election scope — singletons distribute across nodes via consistent hashing (not all on the leader). On leadership change, a **handoff protocol** coordinates the transition: the new leader requests the old leader to stop the singleton and optionally transfer state before starting it. This guarantees at-most-one semantics — the new instance never starts until the old one confirms it has stopped. Configurable `HandoffTimeout` with automatic fallback if the old leader is unreachable. Cluster-of-one incurs zero handoff overhead. Optional `Placement` predicates restrict which nodes can host a singleton.
 - **DaemonSet actors**: `DaemonSetManager` runs an actor on every node. Cross-node addressing via `SendTo(ctx, name, nodeID, payload)` and `AskTo` — no PID construction, no generation guessing. `Broadcast` sends to all nodes. Works seamlessly in single-node mode. Supports **replicated state** via `c.RegisterReplicated()` — each instance gets a `crdt.ORMap` with add-wins semantics that converges automatically across the cluster. Reads are local, writes replicate via the CRDT library's transport and anti-entropy.
+- **Cron timer daemon**: `RegisterCronDaemon(cronID, placement)` runs a per-host cron timer actor via DaemonSetManager. Local actors subscribe to their node's cron daemon for host-local scheduled work.
+- **Cron timer singleton**: `RegisterCronSingleton(cronID, placement, codec)` runs exactly one cron timer cluster-wide via SingletonManager. On leadership change, all subscriptions transfer to the new leader via the handoff protocol. Subscribers on any node receive ticks transparently via cluster transport.
 - **Distributed Ask**: `AskPID(ctx, pid, payload, timeout)` — request-response across nodes. The reply traverses the transport back via node-qualified `__ask_reply@nodeID` namespaces.
 - **Graceful drain**: `Drain(ctx, cluster, cfg, opts...)` — planned shutdown. Emits `MemberLeave` (vs `MemberFailed`), waits a configurable handoff grace period for singleton handoff requests to complete, stops singletons and daemons, deregisters names, waits for in-flight work, then stops transport.
 - **Dynamic node metadata**: `UpdateTags(map[string]string)` sets runtime metadata on a node (region, GPU count, rack, etc.). Tags gossip to all peers automatically. Changed tags emit `MemberUpdated` events. Queryable via `Members()` and `Self()`. Providers (e.g. AWS) contribute infrastructure tags at start; applications add their own at runtime.
@@ -59,10 +62,10 @@ Standalone, extractable CRDT package with zero dependencies on the actor system.
 ```text
 src/
   actor/                  # Runtime, actor refs, mailbox, PID resolver, supervision,
-                          # events, outcomes, pubsub broker, type routing
+                          # events, outcomes, pubsub broker, cron timers, type routing
   actor/cluster/          # Cluster formation, transport, topology, remote messaging,
                           # distributed registry, distributed pubsub, leader election,
-                          # cluster supervision, gossip protocol
+                          # cluster supervision, cron daemon/singleton, gossip protocol
   crdt/                   # Standalone CRDT library (OR-Set, vector clocks)
   internal/metrics/       # Metrics hook interface + no-op implementation
 
@@ -79,7 +82,7 @@ specs/                    # Feature specs/plans/tasks/checklists
 
 - Go 1.24+ (see `go.mod`)
 - macOS/Linux
-- No external dependencies
+- One external dependency: `github.com/robfig/cron/v3` (MIT, zero transitive deps)
 
 ## Build and Test
 
@@ -192,6 +195,18 @@ c, _ := cluster.Start(ctx, rt, cluster.Config{
 - `SendInterval(target PID, payload, interval)` → `*TimerRef`
 - `TimerRef.Cancel()` — stops the timer
 - `CancelTimer(ref)` — convenience alias
+
+### Cron Timers
+
+- `EnsureCronActor(cronID)` — creates or reuses the cron timer actor (lazy auto-start)
+- `CronSubscribe(ctx, cronID, subscriber PID, schedule, payload, tag, timeout)` → `CronCommandAck`
+- `CronUnsubscribe(ctx, cronID, subscriber PID, refID, timeout)` → `CronCommandAck`
+- `CronUnsubscribeAll(ctx, cronID, subscriber PID, timeout)` → `CronCommandAck`
+- `CronList(ctx, cronID, subscriber PID, timeout)` → `CronCommandAck` (with `Refs` populated)
+- `CronHandler(cronID)` → `Handler` — returns handler for daemon/singleton managers
+- Schedules: standard 5-field cron (`*/5 * * * *`), optional seconds (`*/10 * * * * *`), `@every 30s`, `@hourly`, etc.
+- Subscriber receives `CronTickMessage{Ref, Payload, FiredAt, Tag}` on each fire
+- Subscriptions survive actor restarts (keyed by actor ID, not PID generation)
 
 ### Monitors
 
@@ -346,6 +361,44 @@ result, err := dm.AskTo(ctx, "coordinator", "node-3", request, 5*time.Second)
 dm.Broadcast(ctx, "metrics-collector", flushCommand)
 ```
 
+### Cron Timers
+
+```go
+// Single-node: subscribe any actor to a cron schedule.
+// The cron timer actor is created lazily on first use.
+rt := actor.NewRuntime(actor.WithNodeID("node-1"))
+ref, _ := rt.CreateActor("my-worker", nil, workerHandler)
+pid, _ := ref.PID("node-1")
+
+ack, _ := rt.CronSubscribe(ctx, "", pid, "*/5 * * * *", "cleanup", "5min-cleanup", 5*time.Second)
+// ack.Ref.ID can be used to unsubscribe later
+
+// Worker receives CronTickMessage every 5 minutes:
+func workerHandler(_ context.Context, state any, msg actor.Message) (any, error) {
+    switch m := msg.Payload.(type) {
+    case actor.CronTickMessage:
+        fmt.Println("cron fired:", m.Tag, m.FiredAt, m.Payload)
+    }
+    return state, nil
+}
+
+// Unsubscribe:
+rt.CronUnsubscribe(ctx, "", pid, ack.Ref.ID, 5*time.Second)
+
+// Per-host cron daemon (runs on every node in the cluster):
+c.Daemons().RegisterCronDaemon("", nil)  // default ID, all nodes
+
+// Cluster-wide singleton cron (exactly one instance, handoff on failover):
+codec := cluster.NewGobCodec()
+c.Singletons().RegisterCronSingleton("", nil, codec)
+
+// @every shorthand for sub-minute intervals:
+rt.CronSubscribe(ctx, "", pid, "@every 30s", "heartbeat", "", 5*time.Second)
+
+// With seconds precision:
+rt.CronSubscribe(ctx, "", pid, "*/10 * * * * *", "every-10s", "", 5*time.Second)
+```
+
 ### Graceful Drain
 
 ```go
@@ -368,6 +421,7 @@ cluster.Drain(ctx, c, cluster.DrainConfig{Timeout: 30 * time.Second},
 - `GuardrailOutcomes(actorID)`, `AskOutcomes(actorID)`
 - `RoutingOutcomes(routerID)`, `BatchOutcomes(actorID)`
 - `BrokerOutcomes(brokerID)`, `BrokerPublishedCount(brokerID)`
+- `CronList(ctx, cronID, subscriber, timeout)` — list active cron subscriptions
 
 ## Architecture
 

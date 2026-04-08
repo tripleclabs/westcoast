@@ -15,6 +15,7 @@ replace github.com/tripleclabs/crdt-go => ../crdt
 replace github.com/tripleclabs/westcoast/pkg/certmanager => ./pkg/certmanager
 
 require (
+	github.com/robfig/cron/v3 v3.0.1 // indirect
 	golang.org/x/net v0.52.0 // indirect
 	golang.org/x/sys v0.42.0 // indirect
 	golang.org/x/text v0.35.0 // indirect

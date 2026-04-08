@@ -72,6 +72,8 @@ type Runtime struct {
 	randSrc   *rand.Rand
 	brokerMu  sync.RWMutex
 	brokers   map[string]*pubsubBrokerService
+	cronMu    sync.RWMutex
+	cronTimers map[string]*cronBrokerService
 
 	// Cluster integration (nil when single-node).
 	nodeID     string              // local node identity; "" when no cluster
@@ -293,6 +295,7 @@ func NewRuntime(opts ...RuntimeOption) *Runtime {
 		routers:     make(map[string]*routerRuntimeState),
 		randSrc:     rand.New(rand.NewSource(time.Now().UnixNano())),
 		brokers:     make(map[string]*pubsubBrokerService),
+		cronTimers:  make(map[string]*cronBrokerService),
 		timers:      newTimerManager(),
 		deadLetters: newDeadLetterSink(),
 		monitors:    newMonitorManager(),
