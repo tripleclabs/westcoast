@@ -193,6 +193,8 @@ c, _ := cluster.Start(ctx, rt, cluster.Config{
 
 - `SendAfter(target PID, payload, delay)` → `*TimerRef`
 - `SendInterval(target PID, payload, interval)` → `*TimerRef`
+- `SendAfterName(name, payload, delay)` → `*TimerRef` — resolves name at delivery time
+- `SendIntervalName(name, payload, interval)` → `*TimerRef` — resolves name at each tick
 - `TimerRef.Cancel()` — stops the timer
 - `CancelTimer(ref)` — convenience alias
 

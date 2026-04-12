@@ -1424,8 +1424,12 @@ func (r *Runtime) StopAndCapture(actorID string) (any, StopResult) {
 		return nil, StopAlready
 	}
 	inst.status.Store(int32(ActorStoppingCode))
-	// State is now frozen — the message loop will not call the handler again.
+	// Read the latest state under the same lock that processMessage uses
+	// when calling apply() — this serializes against any in-flight handler
+	// completion and gives us a coherent snapshot for handoff transfer.
+	inst.mu.RLock()
 	state := inst.state.value()
+	inst.mu.RUnlock()
 	r.runStopHookWithTimeout(inst, inst.cfg.stopHookTimeout)
 	inst.status.Store(int32(ActorStoppedCode))
 	if v, ok := r.actorPID.Load(actorID); ok {

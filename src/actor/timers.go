@@ -109,6 +109,55 @@ func (r *Runtime) SendInterval(target PID, payload any, interval time.Duration) 
 	return ref
 }
 
+// SendAfterName schedules a one-shot message delivery after a delay,
+// resolved by registered name at delivery time. If the name is not
+// registered when the timer fires, the message is silently dropped.
+func (r *Runtime) SendAfterName(name string, payload any, delay time.Duration) *TimerRef {
+	id := r.timers.seq.Add(1)
+	ctx, cancel := context.WithCancel(context.Background())
+
+	ref := &TimerRef{id: id, cancel: cancel, interval: false}
+	r.timers.add(ref)
+
+	go func() {
+		defer r.timers.remove(id)
+		select {
+		case <-time.After(delay):
+			r.SendName(context.Background(), name, payload)
+		case <-ctx.Done():
+		}
+	}()
+
+	return ref
+}
+
+// SendIntervalName schedules recurring message delivery at a fixed interval,
+// resolved by registered name at each delivery. If the name is not
+// registered when a tick fires, that tick is silently dropped.
+func (r *Runtime) SendIntervalName(name string, payload any, interval time.Duration) *TimerRef {
+	id := r.timers.seq.Add(1)
+	ctx, cancel := context.WithCancel(context.Background())
+
+	ref := &TimerRef{id: id, cancel: cancel, interval: true}
+	r.timers.add(ref)
+
+	go func() {
+		defer r.timers.remove(id)
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				r.SendName(context.Background(), name, payload)
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	return ref
+}
+
 // CancelTimer cancels a timer by its ref. Convenience alias for ref.Cancel().
 func (r *Runtime) CancelTimer(ref *TimerRef) {
 	if ref != nil {

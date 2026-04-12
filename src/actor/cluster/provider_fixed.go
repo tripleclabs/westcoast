@@ -125,11 +125,18 @@ func (p *FixedProvider) heartbeatLoop(ctx context.Context) {
 }
 
 func (p *FixedProvider) probeAll(ctx context.Context) {
-	for _, seed := range p.cfg.Seeds {
+	// Snapshot seeds under the lock — AddSeed may mutate cfg.Seeds concurrently.
+	p.mu.RLock()
+	seeds := make([]NodeMeta, len(p.cfg.Seeds))
+	copy(seeds, p.cfg.Seeds)
+	self := p.self
+	p.mu.RUnlock()
+
+	for _, seed := range seeds {
 		if ctx.Err() != nil {
 			return
 		}
-		if seed.ID == p.self.ID {
+		if seed.ID == self.ID {
 			continue
 		}
 		p.probeSeed(ctx, seed)
