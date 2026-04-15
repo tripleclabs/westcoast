@@ -59,9 +59,18 @@ var defaultTransportFactory TransportFactory
 // when no Transport is provided in the config. Import a transport package
 // to set this automatically:
 //
-//	import _ 
+//	import _
 func SetDefaultTransportFactory(f TransportFactory) {
 	defaultTransportFactory = f
+}
+
+// DefaultTransportFactory returns the registered transport factory, or
+// nil if no transport package has been imported yet. Used by custom
+// BootstrappingProvider implementations (e.g. steiger's CCPBackedProvider)
+// that need to build a transport with their own TLS config but want to
+// reuse whichever transport implementation is already registered.
+func DefaultTransportFactory() TransportFactory {
+	return defaultTransportFactory
 }
 
 // InboundHandler processes events from incoming connections.
